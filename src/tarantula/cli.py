@@ -23,6 +23,11 @@ log = logging.getLogger(__name__)
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
+@app.callback()
+def _main() -> None:
+    """Tarantula: crawl sites and extract typed variables via LLM."""
+
+
 @dataclass
 class PipelineOptions:
     urls_path: Path
