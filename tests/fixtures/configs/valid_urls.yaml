@@ -1,0 +1,16 @@
+defaults:
+  max_depth: 3
+  max_pages: 200
+  same_host_only: true
+  include_subdomains: false
+  respect_robots_txt: true
+  rate_limit_rps: 1.5
+  request_timeout_s: 20
+  user_agent: "tarantula/0.1"
+
+sites:
+  - url: https://example.com
+    max_depth: 4
+    max_pages: 500
+  - url: https://docs.other.com
+    include_subdomains: true

@@ -1,0 +1,18 @@
+variables:
+  - name: company_name
+    type: string
+    description: "Official legal name."
+    required: true
+  - name: founded_year
+    type: integer
+    description: "Year founded."
+    examples:
+      - input: "Founded in 1998"
+        output: 1998
+  - name: products
+    type: array
+    items: string
+    description: "Product names."
+  - name: has_careers_page
+    type: boolean
+    description: "Whether a careers page exists."
