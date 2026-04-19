@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from dotenv import load_dotenv
 
 from .chunker import chunk_text
 from .config import load_urls_config, load_variables_config
@@ -26,6 +27,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 @app.callback()
 def _main() -> None:
     """Tarantula: crawl sites and extract typed variables via LLM."""
+    load_dotenv()
 
 
 @dataclass

@@ -20,6 +20,7 @@ dependencies = [
   "openai>=1.40",
   "typer>=0.12",
   "protego>=0.3",
+  "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
