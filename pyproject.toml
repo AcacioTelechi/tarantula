@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tarantula"
+version = "0.1.0"
+description = "Crawl sites, extract typed variables via LLM with source quotes."
+requires-python = ">=3.11"
+dependencies = [
+  "httpx[http2]>=0.27",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.2",
+  "trafilatura>=1.12",
+  "readability-lxml>=0.8.1",
+  "tldextract>=5.1",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "tiktoken>=0.7",
+  "openai>=1.40",
+  "typer>=0.12",
+  "protego>=0.3",
+]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.45"]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "pytest-httpserver>=1.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+tarantula = "tarantula.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "live: tests that hit real OpenAI (skipped by default)",
+  "playwright: tests that require Chromium (skipped by default)",
+]
+addopts = "-m 'not live and not playwright'"
