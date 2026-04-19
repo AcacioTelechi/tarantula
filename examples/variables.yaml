@@ -1,0 +1,36 @@
+variables:
+  - name: company_name
+    type: string
+    description: "The official legal name of the organization that owns the site."
+    required: true
+
+  - name: founded_year
+    type: integer
+    description: "The year the organization was founded."
+    examples:
+      - input: "Founded in 1998 by Larry Page and Sergey Brin"
+        output: 1998
+      - input: "Since 2015, we've been helping companies..."
+        output: 2015
+
+  - name: headquarters_city
+    type: string
+    description: "The city where the organization is headquartered."
+
+  - name: products
+    type: array
+    items: string
+    description: "Names of the main products or services the organization offers."
+
+  - name: is_open_source
+    type: boolean
+    description: "Whether the organization ships open-source software as a primary offering."
+
+  - name: contact_email
+    type: string
+    description: "A public contact email address for general inquiries."
+
+  - name: social_links
+    type: array
+    items: string
+    description: "Public social media profile URLs (Twitter/X, LinkedIn, GitHub, etc.)."

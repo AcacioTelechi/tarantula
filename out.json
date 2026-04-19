@@ -1,0 +1,497 @@
+{
+  "run_id": 3,
+  "started_at": "2026-04-19T19:05:23Z",
+  "finished_at": "2026-04-19T19:08:46Z",
+  "sites": [
+    {
+      "seed_url": "https://www.anthropic.com",
+      "crawl_status": "ok",
+      "pages_fetched": 10,
+      "variables": {
+        "company_name": {
+          "value": "Anthropic",
+          "source_url": "https://www.anthropic.com/company",
+          "quote": "Anthropic is dedicated to building systems that people can rely on and generating research about the opportunities and risks of AI.",
+          "reasoning": "The company name 'Anthropic' is consistently supported across multiple authoritative pages, with the /company page being the most authoritative source.",
+          "required_missing": false
+        },
+        "founded_year": {
+          "value": 2023,
+          "source_url": "https://www.anthropic.com/constitution",
+          "quote": "to create the Claude Character project in 2023",
+          "reasoning": "The year 2023 is mentioned in the context of the Claude Character project, suggesting it as the founding year, although the context is not entirely clear.",
+          "required_missing": false
+        },
+        "headquarters_city": {
+          "value": "San Francisco",
+          "source_url": "https://www.anthropic.com/research",
+          "quote": "San Francisco",
+          "reasoning": "San Francisco is directly mentioned as the headquarters city on the /research page, which is more specific than the general 'Bay Area' reference.",
+          "required_missing": false
+        },
+        "products": {
+          "value": [
+            "Claude.ai",
+            "Anthropic Economic Futures program",
+            "Anthropic Economic Index",
+            "Claude",
+            "Claude models",
+            "Claude Opus 4.5",
+            "Claude Opus 4.6",
+            "Claude Sonnet 4.5",
+            "Claude for Chrome",
+            "Claude Sonnet 4",
+            "Claude Opus 4",
+            "Claude 3.7 Sonnet",
+            "Claude 3 Haiku",
+            "Claude 3.5 Sonnet",
+            "Claude 3.0 Opus",
+            "Claude Code",
+            "Claude Developer Platform"
+          ],
+          "sources": [
+            {
+              "value_item": "Claude.ai",
+              "source_url": "https://www.anthropic.com/research",
+              "quote": "Claude.ai"
+            },
+            {
+              "value_item": "Anthropic Economic Futures program",
+              "source_url": "https://www.anthropic.com/economic-futures",
+              "quote": "The Anthropic Economic Futures program aims to support research and policy development for addressing the economic impacts of AI."
+            },
+            {
+              "value_item": "Anthropic Economic Index",
+              "source_url": "https://www.anthropic.com/economic-futures",
+              "quote": "The Anthropic Economic Futures program aims to support research and policy development for addressing the economic impacts of AI."
+            },
+            {
+              "value_item": "Claude",
+              "source_url": "https://www.anthropic.com/constitution",
+              "quote": "Claude is Anthropic\u0019s production model"
+            },
+            {
+              "value_item": "Claude models",
+              "source_url": "https://www.anthropic.com/constitution",
+              "quote": "Anthropic develops Claude models for many different purposes."
+            },
+            {
+              "value_item": "Claude Opus 4.5",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4.5 is our new hybrid reasoning large language model."
+            },
+            {
+              "value_item": "Claude Opus 4.6",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4.5 is our new hybrid reasoning large language model."
+            },
+            {
+              "value_item": "Claude Sonnet 4.5",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4.5 showed improvements across the board on our standard evaluations for harmlessness compared with previous models."
+            },
+            {
+              "value_item": "Claude for Chrome",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4.5 showed improvements across the board on our standard evaluations for harmlessness compared with previous models."
+            },
+            {
+              "value_item": "Claude Sonnet 4",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4 and Claude Sonnet 4 are two new hybrid reasoning large language models from Anthropic."
+            },
+            {
+              "value_item": "Claude Opus 4",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude Opus 4 and Claude Sonnet 4 are two new hybrid reasoning large language models from Anthropic."
+            },
+            {
+              "value_item": "Claude 3.7 Sonnet",
+              "source_url": "https://www.anthropic.com/transparency",
+              "quote": "Claude 3.7 Sonnet has reduced unnecessary refusals"
+            },
+            {
+              "value_item": "Claude 3 Haiku",
+              "source_url": "https://www.anthropic.com/responsible-scaling-policy",
+              "quote": "Claude 3 Haiku to quickly and economically scan content and trigger a detailed analysis with an advanced model like Claude 3.5 Sonnet"
+            },
+            {
+              "value_item": "Claude 3.5 Sonnet",
+              "source_url": "https://www.anthropic.com/responsible-scaling-policy",
+              "quote": "Claude 3.0 Opus and Claude 3.5 Sonnet"
+            },
+            {
+              "value_item": "Claude 3.0 Opus",
+              "source_url": "https://www.anthropic.com/responsible-scaling-policy",
+              "quote": "Claude 3.0 Opus and Claude 3.5 Sonnet"
+            },
+            {
+              "value_item": "Claude Code",
+              "source_url": "https://www.anthropic.com/engineering",
+              "quote": "Introducing advanced tool use on the Claude Developer Platform"
+            },
+            {
+              "value_item": "Claude Developer Platform",
+              "source_url": "https://www.anthropic.com/engineering",
+              "quote": "Introducing advanced tool use on the Claude Developer Platform"
+            }
+          ],
+          "reasoning": "The products list is compiled from multiple sources, ensuring a comprehensive and deduplicated list of all mentioned products and services.",
+          "required_missing": false
+        },
+        "is_open_source": {
+          "value": true,
+          "source_url": "https://www.anthropic.com/constitution",
+          "quote": "We\u0019re releasing Claude\u0019s constitution in full under a Creative Commons CC0 1.0 Deed",
+          "reasoning": "The release of Claude's constitution under a Creative Commons license indicates a commitment to open-source principles.",
+          "required_missing": false
+        },
+        "contact_email": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No specific public contact email address is provided, only a domain reference for recruiter emails.",
+          "required_missing": false
+        },
+        "social_links": {
+          "value": null,
+          "sources": [],
+          "reasoning": "There are no social media links provided in the available data.",
+          "required_missing": false
+        }
+      }
+    },
+    {
+      "seed_url": "https://openai.com",
+      "crawl_status": "ok",
+      "pages_fetched": 0,
+      "variables": {
+        "company_name": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No candidates were provided for the company name, so it is set to null.",
+          "required_missing": true
+        },
+        "founded_year": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No candidates were provided for the founded year, so it is set to null.",
+          "required_missing": false
+        },
+        "headquarters_city": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No candidates were provided for the headquarters city, so it is set to null.",
+          "required_missing": false
+        },
+        "products": {
+          "value": null,
+          "sources": [],
+          "reasoning": "No candidates were provided for the products, so it is set to null.",
+          "required_missing": false
+        },
+        "is_open_source": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No candidates were provided for whether the company is open source, so it is set to null.",
+          "required_missing": false
+        },
+        "contact_email": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "No candidates were provided for the contact email, so it is set to null.",
+          "required_missing": false
+        },
+        "social_links": {
+          "value": null,
+          "sources": [],
+          "reasoning": "No candidates were provided for the social links, so it is set to null.",
+          "required_missing": false
+        }
+      }
+    },
+    {
+      "seed_url": "https://docs.python.org",
+      "crawl_status": "ok",
+      "pages_fetched": 10,
+      "variables": {
+        "company_name": {
+          "value": "Python Software Foundation",
+          "source_url": "https://www.python.org",
+          "quote": "Python Software Foundation",
+          "reasoning": "The official website of Python lists the organization as the Python Software Foundation, making it the most authoritative source.",
+          "required_missing": false
+        },
+        "founded_year": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "There are no candidates providing information about the founded year.",
+          "required_missing": false
+        },
+        "headquarters_city": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "There are no candidates providing information about the headquarters city.",
+          "required_missing": false
+        },
+        "products": {
+          "value": [
+            "Django",
+            "Pyramid",
+            "Bottle",
+            "Tornado",
+            "Flask",
+            "Litestar",
+            "FastAPI",
+            "tkInter",
+            "PyGObject",
+            "PyQt",
+            "PySide",
+            "Kivy",
+            "wxPython",
+            "DearPyGui",
+            "PyTorch",
+            "TensorFlow",
+            "scikit-learn",
+            "Transformers",
+            "Anthropic",
+            "LangChain",
+            "SciPy",
+            "Pandas",
+            "IPython",
+            "Buildbot",
+            "Trac",
+            "Roundup",
+            "Ansible",
+            "Salt",
+            "OpenStack",
+            "xonsh",
+            "Python",
+            "Python 3.12.13",
+            "Python 3.10.20",
+            "Python 3.14",
+            "Python 3.13",
+            "Python 3.11",
+            "Python 3.9"
+          ],
+          "sources": [
+            {
+              "value_item": "Django",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Pyramid",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Bottle",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Tornado",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Flask",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Litestar",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "FastAPI",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "tkInter",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "PyGObject",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "PyQt",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "PySide",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Kivy",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "wxPython",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "DearPyGui",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "PyTorch",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "TensorFlow",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "scikit-learn",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Transformers",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Anthropic",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "LangChain",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "SciPy",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Pandas",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "IPython",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Buildbot",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Trac",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Roundup",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Ansible",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Salt",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "OpenStack",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "xonsh",
+              "source_url": "https://www.python.org",
+              "quote": "Use Python for\u0013"
+            },
+            {
+              "value_item": "Python",
+              "source_url": "https://docs.python.org/download.html",
+              "quote": "Download an archive containing all the documentation for this version of Python"
+            },
+            {
+              "value_item": "Python 3.12.13",
+              "source_url": "https://docs.python.org/3.12/",
+              "quote": "Python 3.12.13"
+            },
+            {
+              "value_item": "Python 3.10.20",
+              "source_url": "https://docs.python.org/3.10/",
+              "quote": "Python 3.10.20 documentation"
+            },
+            {
+              "value_item": "Python 3.14",
+              "source_url": "https://www.python.org/doc/versions/",
+              "quote": "Python 3.14"
+            },
+            {
+              "value_item": "Python 3.13",
+              "source_url": "https://www.python.org/doc/versions/",
+              "quote": "Python 3.14"
+            },
+            {
+              "value_item": "Python 3.11",
+              "source_url": "https://www.python.org/doc/versions/",
+              "quote": "Python 3.14"
+            },
+            {
+              "value_item": "Python 3.9",
+              "source_url": "https://www.python.org/doc/versions/",
+              "quote": "Python 3.14"
+            }
+          ],
+          "reasoning": "The list of products is compiled from multiple authoritative sources, including the main Python website and documentation pages, ensuring a comprehensive collection.",
+          "required_missing": false
+        },
+        "is_open_source": {
+          "value": true,
+          "source_url": "https://www.python.org",
+          "quote": "promote, protect, and advance the Python programming language",
+          "reasoning": "The main Python website confirms that Python is open-source, which is a reliable source for this information.",
+          "required_missing": false
+        },
+        "contact_email": {
+          "value": null,
+          "source_url": null,
+          "quote": null,
+          "reasoning": "There are no candidates providing a contact email address.",
+          "required_missing": false
+        },
+        "social_links": {
+          "value": null,
+          "sources": [],
+          "reasoning": "There are no candidates providing social media links.",
+          "required_missing": false
+        }
+      }
+    }
+  ]
+}

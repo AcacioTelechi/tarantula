@@ -1,0 +1,21 @@
+defaults:
+  max_depth: 2
+  max_pages: 50
+  same_host_only: true
+  include_subdomains: false
+  respect_robots_txt: true
+  rate_limit_rps: 1.5
+  request_timeout_s: 20
+  user_agent: "tarantula/0.1 (+contact@example.com)"
+
+sites:
+  - url: https://www.anthropic.com
+    max_depth: 3
+    max_pages: 10
+
+  - url: https://openai.com
+
+  - url: https://docs.python.org
+    include_subdomains: true
+    max_pages: 10
+    rate_limit_rps: 3
