@@ -26,6 +26,9 @@ class CrawlResult:
 
 
 PlaywrightFetcher = Callable[[str, int], Awaitable[tuple[int, bytes, str | None]]]
+PageProgressCallback = Callable[[int, int, str, str], None]
+"""Called after each page is processed: (pages_so_far, depth, url, source)
+where source is 'http', 'playwright', or 'cache'."""
 
 
 async def crawl_site(
@@ -35,6 +38,7 @@ async def crawl_site(
     site: SiteConfig,
     cache_ttl_seconds: int = 86400,
     playwright_fetcher: PlaywrightFetcher | None = None,
+    on_page: PageProgressCallback | None = None,
 ) -> CrawlResult:
     crawl_id = store.start_crawl(run_id, seed_url=site.url)
     pages_fetched = 0
@@ -73,10 +77,12 @@ async def crawl_site(
             cached = store.find_fresh_page(url, ttl_seconds=cache_ttl_seconds)
             if cached:
                 page_id = cached.id
+                source = "cache"
                 with open(cached.raw_path, "rb") as f:
                     raw_bytes = f.read()
                 html = raw_bytes.decode("utf-8", errors="replace")
             else:
+                source = "http"
                 await bucket.acquire()
                 try:
                     async with sem:
@@ -117,12 +123,18 @@ async def crawl_site(
                         )
                         cleaned_text = clean_html(html_pw, url=url)
                         html = html_pw
+                        source = "playwright"
                     except Exception as e:
                         log.warning("playwright fetch failed %s: %s", url, e)
                 store.set_cleaned_text(page_id, cleaned_text or "")
 
             store.link_page(crawl_id, page_id, depth=depth, parent_url=parent)
             pages_fetched += 1
+            if on_page is not None:
+                try:
+                    on_page(pages_fetched, depth, url, source)
+                except Exception:
+                    log.exception("on_page callback raised")
 
             if depth >= site.max_depth:
                 continue

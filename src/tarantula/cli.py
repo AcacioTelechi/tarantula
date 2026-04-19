@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import time
+
 import typer
 from dotenv import load_dotenv
+from rich.console import Console
 
 from .chunker import chunk_text
 from .config import load_urls_config, load_variables_config
@@ -28,6 +31,82 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 def _main() -> None:
     """Tarantula: crawl sites and extract typed variables via LLM."""
     load_dotenv()
+
+
+class Reporter:
+    """Writes human-friendly progress to stderr. Safe to use in pipelines
+    that write JSON to stdout — nothing here touches stdout."""
+
+    def __init__(self, quiet: bool) -> None:
+        self.quiet = quiet
+        self._console = Console(stderr=True, highlight=False)
+        self._run_started: float = 0.0
+        self._site_started: float = 0.0
+
+    def _emit(self, msg: str) -> None:
+        if not self.quiet:
+            self._console.print(msg)
+
+    def run_start(self, n_sites: int, run_id: int) -> None:
+        self._run_started = time.monotonic()
+        self._emit(f"[bold cyan]tarantula[/] run #{run_id} — {n_sites} site(s)")
+
+    def site_start(self, idx: int, total: int, url: str, cfg_depth: int, cfg_pages: int) -> None:
+        self._site_started = time.monotonic()
+        self._emit(
+            f"\n[bold]({idx}/{total})[/] [cyan]{url}[/]  "
+            f"[dim]max_depth={cfg_depth} max_pages={cfg_pages}[/]"
+        )
+        self._emit("  [dim]crawling...[/]")
+
+    def page_fetched(self, pages: int, depth: int, url: str, source: str) -> None:
+        tag = {"http": "[green]http[/]", "playwright": "[yellow]play[/]",
+               "cache": "[blue]cache[/]"}.get(source, source)
+        # Truncate very long URLs for readability.
+        shown = url if len(url) <= 80 else url[:77] + "..."
+        self._emit(f"    [dim]{pages:>3}.[/] {tag} d={depth} {shown}")
+
+    def crawl_done(self, pages: int, status: str) -> None:
+        color = {"ok": "green", "partial": "yellow", "failed": "red"}.get(status, "white")
+        self._emit(f"  [dim]crawl[/] [{color}]{status}[/]: {pages} page(s)")
+
+    def extract_start(self, n_pages: int) -> None:
+        self._emit(f"  [dim]extracting (map) across {n_pages} page(s)...[/]")
+
+    def extract_progress(self, chunk_i: int, chunk_n: int, url: str) -> None:
+        shown = url if len(url) <= 60 else url[:57] + "..."
+        # Carriage-return for in-place update; don't use emit which adds \n
+        if not self.quiet:
+            self._console.print(
+                f"    [dim]chunk {chunk_i}/{chunk_n}[/] {shown}",
+                end="\r", soft_wrap=True,
+            )
+
+    def extract_done(self, chunks: int, candidates: int) -> None:
+        # Clear the in-place line then write the done line.
+        if not self.quiet:
+            self._console.print(" " * 100, end="\r")
+        self._emit(f"  [dim]extract done: {chunks} chunk(s), {candidates} candidate(s)[/]")
+
+    def reduce_start(self) -> None:
+        self._emit("  [dim]reducing (per-site reconciliation)...[/]")
+
+    def site_done(self, extracted: int, total: int, required_missing: int) -> None:
+        elapsed = time.monotonic() - self._site_started
+        miss = f" [red]{required_missing} required missing[/]" if required_missing else ""
+        self._emit(
+            f"  [bold green]done[/] {extracted}/{total} variables extracted "
+            f"in {elapsed:.1f}s{miss}"
+        )
+
+    def run_done(self, exit_code: int, output_path: Path | None) -> None:
+        elapsed = time.monotonic() - self._run_started
+        code_color = "green" if exit_code == 0 else ("yellow" if exit_code == 2 else "red")
+        where = f" -> {output_path}" if output_path else ""
+        self._emit(
+            f"\n[bold]finished[/] in {elapsed:.1f}s, "
+            f"exit [{code_color}]{exit_code}[/]{where}"
+        )
 
 
 @dataclass
@@ -58,21 +137,27 @@ async def run_pipeline(opts: PipelineOptions) -> int:
     run_id = store.start_run(urls_yaml_inline, vars_yaml_inline)
 
     client = opts.llm_client or OpenAIClient()
+    reporter = Reporter(quiet=opts.quiet)
+    reporter.run_start(n_sites=len(urls_cfg.sites), run_id=run_id)
 
     sites_out = []
     run_status_bits = 0  # bit 0=required_missing, bit 1=partial, bit 2=failed
     started_at = _iso_now()
 
-    for site in urls_cfg.sites:
+    for idx, site in enumerate(urls_cfg.sites, start=1):
+        reporter.site_start(idx, len(urls_cfg.sites), site.url,
+                            cfg_depth=site.max_depth, cfg_pages=site.max_pages)
         ttl = 0 if opts.no_cache else opts.cache_ttl_seconds
         try:
             result = await crawl_site(
                 store=store, run_id=run_id, site=site,
                 cache_ttl_seconds=ttl,
                 playwright_fetcher=playwright_fetch,
+                on_page=reporter.page_fetched,
             )
         except Exception as e:
             log.exception("crawl of %s failed: %s", site.url, e)
+            reporter.crawl_done(pages=0, status="failed")
             run_status_bits |= 0b100
             sites_out.append({
                 "seed_url": site.url,
@@ -82,6 +167,7 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             })
             continue
 
+        reporter.crawl_done(pages=result.pages_fetched, status=result.status)
         if result.status == "partial":
             run_status_bits |= 0b010
         elif result.status == "failed":
@@ -95,10 +181,21 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             (result.crawl_id,),
         ).fetchall())
 
-        for page_id, url, title, cleaned in page_rows:
-            if not cleaned:
-                continue
-            for chunk in chunk_text(cleaned):
+        pages_with_text = [r for r in page_rows if r[3]]
+        reporter.extract_start(n_pages=len(pages_with_text))
+
+        # Pre-compute chunks per page so we can report accurate progress.
+        chunks_per_page = [
+            (page_id, url, title, list(chunk_text(cleaned)))
+            for page_id, url, title, cleaned in pages_with_text
+        ]
+        total_chunks = sum(len(cs) for _, _, _, cs in chunks_per_page)
+        chunk_i = 0
+
+        for page_id, url, title, chunks in chunks_per_page:
+            for chunk in chunks:
+                chunk_i += 1
+                reporter.extract_progress(chunk_i, total_chunks, url)
                 chunk_id = store.save_chunk(
                     page_id=page_id, ordinal=chunk.ordinal,
                     text=chunk.text, token_count=chunk.token_count,
@@ -121,6 +218,10 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                                       source_url=url, page_title=title)
                         )
 
+        n_candidates = sum(len(v) for v in candidates_by_var.values())
+        reporter.extract_done(chunks=total_chunks, candidates=n_candidates)
+
+        reporter.reduce_start()
         reduced = reduce_candidates(
             client=client, variables=vars_cfg.variables,
             candidates_by_var=candidates_by_var, model=opts.reduce_model,
@@ -137,6 +238,10 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             )
             if payload.get("required_missing"):
                 run_status_bits |= 0b001
+
+        extracted = sum(1 for v in reduced.values() if v.get("value") is not None)
+        missing_required = sum(1 for v in reduced.values() if v.get("required_missing"))
+        reporter.site_done(extracted, len(reduced), missing_required)
 
         sites_out.append({
             "seed_url": site.url,
@@ -158,33 +263,20 @@ async def run_pipeline(opts: PipelineOptions) -> int:
     out_text = json.dumps(payload, indent=2, default=str)
     if opts.output_path:
         opts.output_path.write_text(out_text)
-        if not opts.quiet:
-            print(_summary(sites_out))
     else:
         print(out_text)
 
     if run_status_bits & 0b100:
-        return 4
-    if run_status_bits & 0b010:
-        return 3
-    if run_status_bits & 0b001:
-        return 2
-    return 0
+        exit_code = 4
+    elif run_status_bits & 0b010:
+        exit_code = 3
+    elif run_status_bits & 0b001:
+        exit_code = 2
+    else:
+        exit_code = 0
 
-
-def _summary(sites: list[dict]) -> str:
-    n_sites = len(sites)
-    extracted = sum(
-        1 for s in sites for v in s["variables"].values() if v.get("value") is not None
-    )
-    total_vars = sum(len(s["variables"]) for s in sites)
-    missing_required = sum(
-        1 for s in sites for v in s["variables"].values() if v.get("required_missing")
-    )
-    return (
-        f"{n_sites} sites, {extracted}/{total_vars} variables extracted, "
-        f"{missing_required} required missing"
-    )
+    reporter.run_done(exit_code, opts.output_path)
+    return exit_code
 
 
 def _iso_now() -> str:
