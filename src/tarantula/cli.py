@@ -15,6 +15,7 @@ from .crawler import crawl_site
 from .extractor import MapInput, extract_from_chunk
 from .llm import LLMClient, OpenAIClient
 from .logging_setup import configure as configure_logging
+from .playwright_fetcher import playwright_fetch
 from .reducer import Candidate, reduce_candidates
 from .store import Store
 
@@ -59,7 +60,9 @@ async def run_pipeline(opts: PipelineOptions) -> int:
         ttl = 0 if opts.no_cache else opts.cache_ttl_seconds
         try:
             result = await crawl_site(
-                store=store, run_id=run_id, site=site, cache_ttl_seconds=ttl
+                store=store, run_id=run_id, site=site,
+                cache_ttl_seconds=ttl,
+                playwright_fetcher=playwright_fetch,
             )
         except Exception as e:
             log.exception("crawl of %s failed: %s", site.url, e)
