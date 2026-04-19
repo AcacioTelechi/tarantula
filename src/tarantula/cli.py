@@ -138,7 +138,8 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             "variables": reduced,
         })
 
-    store.finish_run(run_id, status="ok")
+    run_status = "failed" if run_status_bits & 0b100 else "ok"
+    store.finish_run(run_id, status=run_status)
 
     finished_at = _iso_now()
     payload = {
