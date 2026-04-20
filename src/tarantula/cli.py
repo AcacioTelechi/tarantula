@@ -428,22 +428,30 @@ def retrieve(
 
     if crawl_id is None:
         if not seed_url:
-            raise typer.BadParameter("Pass --seed-url or --crawl-id.")
+            typer.echo("Error: pass --seed-url or --crawl-id.", err=True)
+            raise typer.Exit(code=1)
         row = store.conn.execute(
             "SELECT id FROM crawls WHERE seed_url=? "
-            "ORDER BY started_at DESC LIMIT 1", (seed_url,),
+            "ORDER BY started_at DESC, id DESC LIMIT 1", (seed_url,),
         ).fetchone()
         if not row:
-            raise typer.BadParameter(f"No crawl found for {seed_url!r}.")
+            typer.echo(f"Error: no crawl found for {seed_url!r}.", err=True)
+            raise typer.Exit(code=1)
         crawl_id = row[0]
 
     chosen = [v for v in vars_cfg.variables
               if variable is None or v.name == variable]
     if not chosen:
-        raise typer.BadParameter(f"No variable named {variable!r}.")
+        typer.echo(f"Error: no variable named {variable!r}.", err=True)
+        raise typer.Exit(code=1)
 
-    client = OpenAIClient()
-    embed_fn = lambda texts: client.embed(texts, model=embed_model)
+    _client: OpenAIClient | None = None
+
+    def embed_fn(texts: list[str]) -> list[list[float]]:
+        nonlocal _client
+        if _client is None:
+            _client = OpenAIClient()
+        return _client.embed(texts, model=embed_model)
 
     console = Console(stderr=False, highlight=False)
     out: list[dict] = []
