@@ -251,25 +251,88 @@ def test_save_chunk_embedding_and_read_back(tmp_path):
 
 
 def test_bm25_top_k_scopes_to_crawl(tmp_path):
-    store, crawl_id, c1, _c2 = _seed_two_chunks(tmp_path)
-    hits = store.bm25_top_k(crawl_id, "founded engineers", k=5)
-    assert hits and hits[0][0] == c1
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    run_id = store.start_run("u", "v")
+    # Two separate crawls, each with a chunk containing "founded".
+    crawl_a = store.start_crawl(run_id, "https://a.com")
+    pa = store.save_page(url="https://a.com", raw_bytes=b"<a/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="A")
+    store.link_page(crawl_a, pa, depth=0, parent_url=None)
+    ca = store.save_chunk(pa, 0, "Company A was founded in 1998.", 6)
+
+    crawl_b = store.start_crawl(run_id, "https://b.com")
+    pb = store.save_page(url="https://b.com", raw_bytes=b"<b/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="B")
+    store.link_page(crawl_b, pb, depth=0, parent_url=None)
+    cb = store.save_chunk(pb, 0, "Company B was founded in 2001.", 6)
+
+    hits_a = store.bm25_top_k(crawl_a, "founded", k=5)
+    assert [h[0] for h in hits_a] == [ca]
+    hits_b = store.bm25_top_k(crawl_b, "founded", k=5)
+    assert [h[0] for h in hits_b] == [cb]
 
 
 def test_vector_top_k_scopes_to_crawl_and_orders_by_cosine(tmp_path):
-    store, crawl_id, c1, c2 = _seed_two_chunks(tmp_path)
-    # Give c1 a vector aligned with the query; c2 an orthogonal one.
-    store.save_chunk_embedding(c1, [1.0, 0.0, 0.0], model="stub")
-    store.save_chunk_embedding(c2, [0.0, 1.0, 0.0], model="stub")
-    hits = store.vector_top_k(crawl_id, [1.0, 0.0, 0.0], k=5)
-    assert [h[0] for h in hits] == [c1, c2]
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    run_id = store.start_run("u", "v")
+    crawl_a = store.start_crawl(run_id, "https://a.com")
+    pa = store.save_page(url="https://a.com", raw_bytes=b"<a/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="A")
+    store.link_page(crawl_a, pa, depth=0, parent_url=None)
+    ca1 = store.save_chunk(pa, 0, "aligned chunk in crawl A", 5)
+    ca2 = store.save_chunk(pa, 1, "orthogonal chunk in crawl A", 5)
+    store.save_chunk_embedding(ca1, [1.0, 0.0, 0.0], model="stub")
+    store.save_chunk_embedding(ca2, [0.0, 1.0, 0.0], model="stub")
+
+    crawl_b = store.start_crawl(run_id, "https://b.com")
+    pb = store.save_page(url="https://b.com", raw_bytes=b"<b/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="B")
+    store.link_page(crawl_b, pb, depth=0, parent_url=None)
+    cb = store.save_chunk(pb, 0, "chunk in crawl B", 4)
+    store.save_chunk_embedding(cb, [1.0, 0.0, 0.0], model="stub")
+
+    hits = store.vector_top_k(crawl_a, [1.0, 0.0, 0.0], k=5)
+    # Only crawl A chunks; ca1 first (aligned), ca2 second (orthogonal).
+    assert [h[0] for h in hits] == [ca1, ca2]
     assert hits[0][1] > hits[1][1]
 
 
 def test_get_chunks_for_crawl_returns_text_and_url(tmp_path):
     store, crawl_id, c1, c2 = _seed_two_chunks(tmp_path)
     rows = store.get_chunks_for_crawl(crawl_id)
+    # c1 is on page linked at depth=0, c2 at depth=1 — ordering asserts the ORDER BY.
+    assert [r[0] for r in rows] == [c1, c2]
     by_id = {r[0]: r for r in rows}
     assert by_id[c1][2] == "https://example.com/a"
     assert "founded" in by_id[c1][4]
-    assert set(by_id) == {c1, c2}
+
+
+def test_bm25_top_k_tolerates_natural_language_with_punctuation(tmp_path):
+    store, crawl_id, c1, _c2 = _seed_two_chunks(tmp_path)
+    # Queries that would crash raw FTS5 MATCH: email-like, colon, trailing dot.
+    hits = store.bm25_top_k(crawl_id, "contact us at hello@example.com.", k=5)
+    # Top hit should be the chunk mentioning the email address.
+    assert hits and hits[0][0] != c1  # c2 is the email chunk
+
+
+def test_bm25_top_k_returns_empty_on_empty_or_whitespace_query(tmp_path):
+    store, crawl_id, _c1, _c2 = _seed_two_chunks(tmp_path)
+    assert store.bm25_top_k(crawl_id, "", k=5) == []
+    assert store.bm25_top_k(crawl_id, "   ", k=5) == []
+    assert store.bm25_top_k(crawl_id, "!!!", k=5) == []
+
+
+def test_sanitize_fts_query_strips_reserved():
+    from tarantula.store import _sanitize_fts_query
+    assert _sanitize_fts_query("hello@world.com v1.0:") == "hello world com v1 0"
+    assert _sanitize_fts_query("") is None
+    assert _sanitize_fts_query("!!!") is None
+    assert _sanitize_fts_query("  foo  bar  ") == "foo bar"

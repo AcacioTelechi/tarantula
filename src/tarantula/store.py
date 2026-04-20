@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,19 @@ from . import embeddings
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+_FTS5_RESERVED = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _sanitize_fts_query(query: str) -> str | None:
+    """Strip FTS5 operator/reserved characters so arbitrary natural-language
+    text is safe to pass as a MATCH argument. Returns None if nothing
+    indexable remains (caller should short-circuit).
+    """
+    cleaned = _FTS5_RESERVED.sub(" ", query)
+    collapsed = " ".join(cleaned.split())
+    return collapsed or None
 
 
 SCHEMA_SQL = """
@@ -362,8 +376,13 @@ class Store:
         """Returns [(chunk_id, bm25_score)] ranked best-first.
 
         bm25() returns a *negative* number where smaller == better. We negate so
-        larger == better for downstream fusion ergonomics.
+        larger == better for downstream fusion ergonomics. The query is sanitized
+        to strip FTS5 reserved characters so natural-language descriptions /
+        example inputs are safe to pass verbatim.
         """
+        safe = _sanitize_fts_query(query)
+        if safe is None:
+            return []
         rows = self.conn.execute(
             "SELECT f.rowid, -bm25(chunks_fts) AS s "
             "FROM chunks_fts f "
@@ -371,7 +390,7 @@ class Store:
             "JOIN crawl_pages cp ON cp.page_id = c.page_id "
             "WHERE cp.crawl_id = ? AND chunks_fts MATCH ? "
             "ORDER BY s DESC LIMIT ?",
-            (crawl_id, query, k),
+            (crawl_id, safe, k),
         ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
