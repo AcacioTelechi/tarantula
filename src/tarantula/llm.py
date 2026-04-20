@@ -112,3 +112,21 @@ class OpenAIClient:
                 log.warning("OpenAI attempt %d failed: %s (retry in %ds)", attempt + 1, e, wait)
                 time.sleep(wait)
         raise RuntimeError(f"OpenAI request failed after {self._max_retries} attempts") from last_exc
+
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        if not texts:
+            return []
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                resp = self._client.embeddings.create(model=model, input=texts)
+                return [d.embedding for d in resp.data]
+            except Exception as e:
+                last_exc = e
+                wait = min(2 ** attempt, 30)
+                log.warning("OpenAI embed attempt %d failed: %s (retry in %ds)",
+                            attempt + 1, e, wait)
+                time.sleep(wait)
+        raise RuntimeError(
+            f"OpenAI embed failed after {self._max_retries} attempts"
+        ) from last_exc
