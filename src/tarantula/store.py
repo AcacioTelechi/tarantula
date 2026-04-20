@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS extractions (
 CREATE INDEX IF NOT EXISTS idx_pages_url ON pages(url);
 CREATE INDEX IF NOT EXISTS idx_crawl_pages_crawl ON crawl_pages(crawl_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_extractions_run ON chunk_extractions(run_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_page_id ON chunks(page_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
   USING fts5(text, content='chunks', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN

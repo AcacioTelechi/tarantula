@@ -336,3 +336,14 @@ def test_sanitize_fts_query_strips_reserved():
     assert _sanitize_fts_query("") is None
     assert _sanitize_fts_query("!!!") is None
     assert _sanitize_fts_query("  foo  bar  ") == "foo bar"
+
+
+def test_init_schema_creates_chunks_page_id_index(tmp_path):
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    rows = store.conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND tbl_name='chunks' AND name='idx_chunks_page_id'"
+    ).fetchall()
+    assert rows, "idx_chunks_page_id should be created on init"
