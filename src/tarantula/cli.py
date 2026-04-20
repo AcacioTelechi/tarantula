@@ -398,6 +398,96 @@ def extract(
     raise typer.Exit(code=exit_code)
 
 
+@app.command()
+def retrieve(
+    db: Path = typer.Option(Path("tarantula.db"), "--db", exists=True),
+    data_dir: Path = typer.Option(Path("./data"), "--data-dir"),
+    variables: Path = typer.Option(..., "--variables", exists=True),
+    seed_url: Optional[str] = typer.Option(None, "--seed-url",
+        help="Filter to the latest crawl of this seed URL."),
+    crawl_id: Optional[int] = typer.Option(None, "--crawl-id",
+        help="Specific crawl to query. Overrides --seed-url."),
+    variable: Optional[str] = typer.Option(None, "--variable",
+        help="Retrieve for one variable name. Default: all."),
+    k: int = typer.Option(10, "--k"),
+    mode: str = typer.Option("hybrid", "--mode",
+        help="hybrid | bm25 | vec"),
+    retrieval_candidates: int = typer.Option(50, "--retrieval-candidates"),
+    embed_model: str = typer.Option("text-embedding-3-small", "--embed-model"),
+    show_text: bool = typer.Option(False, "--show-text",
+        help="Print the full chunk text under each hit."),
+    as_json: bool = typer.Option(False, "--json",
+        help="Emit machine-readable JSON instead of a pretty table."),
+) -> None:
+    """Inspect retrieval for an existing crawl without running extraction."""
+    from .retriever import retrieve_for_variable
+
+    vars_cfg = load_variables_config(variables)
+    store = Store(db, data_dir=data_dir)
+    store.init_schema()
+
+    if crawl_id is None:
+        if not seed_url:
+            raise typer.BadParameter("Pass --seed-url or --crawl-id.")
+        row = store.conn.execute(
+            "SELECT id FROM crawls WHERE seed_url=? "
+            "ORDER BY started_at DESC LIMIT 1", (seed_url,),
+        ).fetchone()
+        if not row:
+            raise typer.BadParameter(f"No crawl found for {seed_url!r}.")
+        crawl_id = row[0]
+
+    chosen = [v for v in vars_cfg.variables
+              if variable is None or v.name == variable]
+    if not chosen:
+        raise typer.BadParameter(f"No variable named {variable!r}.")
+
+    client = OpenAIClient()
+    embed_fn = lambda texts: client.embed(texts, model=embed_model)
+
+    console = Console(stderr=False, highlight=False)
+    out: list[dict] = []
+    for v in chosen:
+        hits = retrieve_for_variable(
+            store=store, crawl_id=crawl_id, variable=v,
+            embed_fn=embed_fn, k=k, mode=mode,
+            fts_candidates=retrieval_candidates,
+            vec_candidates=retrieval_candidates,
+        )
+        out.append({
+            "variable": v.name,
+            "hits": [{
+                "chunk_id": h.chunk_id, "score": h.score,
+                "bm25_rank": h.bm25_rank, "vec_rank": h.vec_rank,
+                "url": h.url, "title": h.title,
+                "text": h.text if show_text else h.text[:160],
+            } for h in hits],
+        })
+
+    if as_json:
+        if len(out) == 1 and variable is not None:
+            print(json.dumps(out[0], indent=2))
+        else:
+            print(json.dumps(out, indent=2))
+        return
+
+    for entry in out:
+        console.print(f"\n[bold cyan]{entry['variable']}[/]")
+        for i, h in enumerate(entry["hits"], start=1):
+            ranks = (
+                f"bm25={h['bm25_rank'] if h['bm25_rank'] is not None else '-'}"
+                f" vec={h['vec_rank'] if h['vec_rank'] is not None else '-'}"
+            )
+            preview = h["text"][:160].replace("\n", " ")
+            console.print(
+                f"  [bold]{i:>2}.[/] score={h['score']:.4f} {ranks}  "
+                f"[blue]{h['url']}[/]"
+            )
+            console.print(f"      [dim]{preview}[/]")
+            if show_text and len(h["text"]) > 160:
+                console.print(f"      [dim]{h['text'][160:]}[/]")
+
+
 def _parse_duration(s: str) -> int:
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     s = s.strip().lower()
