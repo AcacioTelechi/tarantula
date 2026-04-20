@@ -1,0 +1,187 @@
+from tarantula.config import VariableSpec
+from tarantula.contextual_extractor import (
+    extract_variable, extract_all, build_extract_schema,
+)
+from tarantula.llm import FakeLLMClient
+from tarantula.retriever import Hit
+
+
+def _scalar_spec(**kw) -> VariableSpec:
+    base = dict(name="company_name", type="string",
+                description="Legal name of the company.")
+    base.update(kw)
+    return VariableSpec(**base)
+
+
+def _array_spec(**kw) -> VariableSpec:
+    base = dict(name="products", type="array", items="string",
+                description="Products offered.")
+    base.update(kw)
+    return VariableSpec(**base)
+
+
+def _hit(chunk_id: int, url: str, text: str, title: str | None = None) -> Hit:
+    return Hit(
+        chunk_id=chunk_id, page_id=chunk_id, url=url, title=title,
+        text=text, score=1.0, bm25_rank=1, vec_rank=None,
+    )
+
+
+def test_scalar_schema_shape():
+    schema = build_extract_schema(_scalar_spec())
+    assert set(schema["required"]) == {"value", "source_url", "quote", "reasoning"}
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["value"]["type"] == ["string", "null"]
+
+
+def test_array_schema_shape():
+    schema = build_extract_schema(_array_spec())
+    assert "sources" in schema["required"]
+    src_item = schema["properties"]["sources"]["items"]
+    assert src_item["required"] == ["value_item", "source_url", "quote"]
+    assert src_item["properties"]["value_item"]["type"] == "string"
+
+
+def test_extract_scalar_returns_value_when_quote_valid():
+    hits = [_hit(1, "https://ex.com/about", "ACME Inc. is a private company.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.",
+            "source_url": "https://ex.com/about",
+            "quote": "ACME Inc. is a private company.",
+            "reasoning": "from about page",
+        }
+    })
+    result = extract_variable(client=fake, variable=_scalar_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] == "ACME Inc."
+    assert result["source_url"] == "https://ex.com/about"
+    assert result["quote"] == "ACME Inc. is a private company."
+    assert result["required_missing"] is False
+
+
+def test_extract_scalar_nulls_value_when_quote_fabricated():
+    hits = [_hit(1, "https://ex.com/about", "Real content here only.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.",
+            "source_url": "https://ex.com/about",
+            "quote": "Fabricated quote not in content.",
+            "reasoning": "hallucinated",
+        }
+    })
+    result = extract_variable(client=fake, variable=_scalar_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] is None
+    assert result["quote"] is None
+    assert result["source_url"] is None
+
+
+def test_extract_scalar_nulls_value_when_no_citation_provided():
+    hits = [_hit(1, "https://ex.com/about", "Some text.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.",
+            "source_url": None,
+            "quote": None,
+            "reasoning": "claimed without citation",
+        }
+    })
+    result = extract_variable(client=fake, variable=_scalar_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] is None
+
+
+def test_extract_skips_llm_call_when_no_hits():
+    fake = FakeLLMClient()
+    result = extract_variable(client=fake, variable=_scalar_spec(required=True),
+                              hits=[], model="fake")
+    assert result["value"] is None
+    assert result["required_missing"] is True
+    assert fake.calls == []  # no LLM call
+
+
+def test_extract_array_drops_sources_with_bad_quotes():
+    hits = [_hit(1, "https://ex.com/products", "We sell Widget Pro and Widget Lite.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_products": {
+            "value": ["Widget Pro", "Widget Lite", "Ghost Item"],
+            "sources": [
+                {"value_item": "Widget Pro",
+                 "source_url": "https://ex.com/products",
+                 "quote": "Widget Pro"},
+                {"value_item": "Widget Lite",
+                 "source_url": "https://ex.com/products",
+                 "quote": "Widget Lite"},
+                {"value_item": "Ghost Item",
+                 "source_url": "https://ex.com/products",
+                 "quote": "This quote is fake"},
+            ],
+            "reasoning": "products page",
+        }
+    })
+    result = extract_variable(client=fake, variable=_array_spec(),
+                              hits=hits, model="fake")
+    assert len(result["sources"]) == 2
+    assert {s["value_item"] for s in result["sources"]} == {"Widget Pro", "Widget Lite"}
+
+
+def test_extract_array_nulls_value_when_all_sources_invalid():
+    hits = [_hit(1, "https://ex.com/products", "Real text.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_products": {
+            "value": ["Ghost"],
+            "sources": [
+                {"value_item": "Ghost",
+                 "source_url": "https://ex.com/products",
+                 "quote": "fabricated quote"},
+            ],
+            "reasoning": "all bad",
+        }
+    })
+    result = extract_variable(client=fake, variable=_array_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] is None
+    assert result["sources"] == []
+
+
+def test_extract_required_missing_flag_on_null():
+    hits = [_hit(1, "https://ex.com/a", "nothing relevant")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": None, "source_url": None, "quote": None,
+            "reasoning": "not found",
+        }
+    })
+    result = extract_variable(client=fake,
+                              variable=_scalar_spec(required=True),
+                              hits=hits, model="fake")
+    assert result["required_missing"] is True
+
+
+def test_extract_all_calls_llm_once_per_variable():
+    hits_by_var = {
+        "company_name": [_hit(1, "https://ex.com/a", "ACME Inc. founded.")],
+        "products": [_hit(2, "https://ex.com/b", "We sell Widget Pro.")],
+    }
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.", "source_url": "https://ex.com/a",
+            "quote": "ACME Inc. founded.", "reasoning": "x",
+        },
+        "extract_products": {
+            "value": ["Widget Pro"],
+            "sources": [{"value_item": "Widget Pro",
+                         "source_url": "https://ex.com/b",
+                         "quote": "Widget Pro"}],
+            "reasoning": "x",
+        },
+    })
+    variables = [_scalar_spec(), _array_spec()]
+    results = extract_all(client=fake, variables=variables,
+                          hits_by_var=hits_by_var, model="fake")
+    assert results["company_name"]["value"] == "ACME Inc."
+    assert results["products"]["value"] == ["Widget Pro"]
+    assert len(fake.calls) == 2
+    # Result ordering matches input variable order (stable for JSON output).
+    assert list(results.keys()) == ["company_name", "products"]
