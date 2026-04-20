@@ -211,12 +211,21 @@ async def run_pipeline(opts: PipelineOptions) -> int:
 
         # --- Embed any chunks that don't yet have a vector (retrieval step) ---
         if opts.retrieval != "off":
-            rows_to_embed = [
-                (cid, text) for (cid, _url, _title, text) in tasks
-                if store.conn.execute(
-                    "SELECT 1 FROM chunks WHERE id=? AND embedding IS NULL", (cid,)
-                ).fetchone()
-            ]
+            ids = [t[0] for t in tasks]
+            rows_to_embed: list[tuple[int, str]] = []
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                existing_null = {
+                    r[0] for r in store.conn.execute(
+                        f"SELECT id FROM chunks "
+                        f"WHERE id IN ({placeholders}) AND embedding IS NULL",
+                        ids,
+                    )
+                }
+                rows_to_embed = [
+                    (cid, text) for (cid, _url, _title, text) in tasks
+                    if cid in existing_null
+                ]
             if rows_to_embed:
                 # Batch to keep requests small; 64 chunks/req is a safe default.
                 for i in range(0, len(rows_to_embed), 64):

@@ -91,6 +91,7 @@ async def test_pipeline_extracts_from_sample_site(httpserver, tmp_path, fixtures
         max_tokens=10_000_000,
         no_cache=False,
         llm_client=fake,
+        retrieval="off",
     )
     exit_code = await run_pipeline(opts)
 
