@@ -130,3 +130,41 @@ def test_mark_orphan_runs_as_failed_on_init(tmp_path):
     s2.init_schema()
     status = s2.conn.execute("SELECT status FROM runs WHERE id=?", (rid,)).fetchone()[0]
     assert status == "failed"
+
+
+def test_init_schema_adds_embedding_columns_and_fts(tmp_path):
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    cols = {r[1] for r in store.conn.execute("PRAGMA table_info(chunks)")}
+    assert "embedding" in cols
+    assert "embedding_model" in cols
+    fts = store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+    ).fetchone()
+    assert fts is not None
+
+
+def test_fts_is_populated_by_save_chunk(tmp_path):
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    # Set up minimal page to reference
+    page_id = store.save_page(
+        url="https://example.com", raw_bytes=b"<html/>",
+        http_status=200, content_type="text/html",
+        fetcher="http", title="ex",
+    )
+    store.save_chunk(page_id=page_id, ordinal=0,
+                     text="the quick brown fox jumps", token_count=5)
+    hits = store.conn.execute(
+        "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'quick'"
+    ).fetchall()
+    assert len(hits) == 1
+
+
+def test_init_schema_idempotent_on_existing_db(tmp_path):
+    from tarantula.store import Store
+    db = tmp_path / "t.db"
+    s1 = Store(db, data_dir=tmp_path / "data"); s1.init_schema(); s1.conn.close()
+    s2 = Store(db, data_dir=tmp_path / "data"); s2.init_schema()  # should not raise

@@ -87,6 +87,18 @@ CREATE TABLE IF NOT EXISTS extractions (
 CREATE INDEX IF NOT EXISTS idx_pages_url ON pages(url);
 CREATE INDEX IF NOT EXISTS idx_crawl_pages_crawl ON crawl_pages(crawl_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_extractions_run ON chunk_extractions(run_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
+  USING fts5(text, content='chunks', content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES('delete', old.id, old.text);
+  INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+END;
 """
 
 
@@ -123,6 +135,12 @@ class Store:
 
     def init_schema(self) -> None:
         self.conn.executescript(SCHEMA_SQL)
+        # Migration: add embedding columns on existing DBs.
+        existing = {r[1] for r in self.conn.execute("PRAGMA table_info(chunks)")}
+        if "embedding" not in existing:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN embedding BLOB")
+        if "embedding_model" not in existing:
+            self.conn.execute("ALTER TABLE chunks ADD COLUMN embedding_model TEXT")
         self.conn.execute(
             "UPDATE runs SET status='failed', finished_at=? "
             "WHERE status='running' AND finished_at IS NULL",
