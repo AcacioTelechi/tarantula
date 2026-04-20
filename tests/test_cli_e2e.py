@@ -209,3 +209,55 @@ async def test_retrieval_off_preserves_full_scan(httpserver, tmp_path, fixtures_
     n_map = sum(1 for c in fake.calls if c.schema_name == "per_chunk_extraction")
     # 3 pages in the fixture → 3 chunks (pages are small) → 3 map calls.
     assert n_map >= 3, f"expected at least 3 map calls (full scan), got {n_map}"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_bm25_does_not_embed(httpserver, tmp_path, fixtures_dir):
+    """With --retrieval bm25, chunks should never be embedded (no API calls)."""
+    _serve_fixture(httpserver, fixtures_dir)
+
+    urls_yaml = tmp_path / "urls.yaml"
+    urls_yaml.write_text(
+        "defaults:\n  max_depth: 2\n  rate_limit_rps: 50\n"
+        "sites:\n"
+        f"  - url: {httpserver.url_for('/')}\n"
+    )
+    vars_yaml = tmp_path / "vars.yaml"
+    vars_yaml.write_text(
+        "variables:\n"
+        "  - {name: company_name, type: string, description: Legal name of the company., required: true}\n"
+    )
+    fake = FakeLLMClient(
+        responses_by_schema={
+            "per_chunk_extraction": {
+                "company_name": {"found": False, "value": None, "quote": None},
+            },
+            "site_reduction_company_name": {
+                "company_name": {
+                    "value": None, "source_url": None, "quote": None,
+                    "reasoning": "nothing found", "required_missing": True,
+                },
+            },
+        },
+    )
+
+    opts = PipelineOptions(
+        urls_path=urls_yaml,
+        variables_path=vars_yaml,
+        output_path=tmp_path / "out.json",
+        db_path=tmp_path / "t.db",
+        data_dir=tmp_path / "data",
+        map_model="fake",
+        reduce_model="fake",
+        cache_ttl_seconds=3600,
+        max_tokens=10_000_000,
+        no_cache=False,
+        llm_client=fake,
+        quiet=True,
+        retrieval="bm25",
+        top_k=1,
+    )
+    await run_pipeline(opts)
+
+    # bm25 mode must not hit the embedding API at all.
+    assert fake.embed_calls == []

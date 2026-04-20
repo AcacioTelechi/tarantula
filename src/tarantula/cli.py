@@ -210,7 +210,9 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                 tasks.append((chunk_id, url, title, chunk.text))
 
         # --- Embed any chunks that don't yet have a vector (retrieval step) ---
-        if opts.retrieval != "off":
+        # Only the hybrid and vec modes need embeddings; pure bm25 avoids the
+        # embedding API entirely, so users without an API key can still run it.
+        if opts.retrieval in ("hybrid", "vec"):
             ids = [t[0] for t in tasks]
             rows_to_embed: list[tuple[int, str]] = []
             if ids:
@@ -234,7 +236,8 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                     for (cid, _text), vec in zip(batch, vecs):
                         store.save_chunk_embedding(cid, vec, model=opts.embed_model)
 
-            # --- Retrieve top-k per variable; union the chunk IDs ---
+        # --- Retrieve top-k per variable; union the chunk IDs ---
+        if opts.retrieval != "off":
             from .retriever import retrieve_for_variable
             keep_ids: set[int] = set()
             for v in vars_cfg.variables:
