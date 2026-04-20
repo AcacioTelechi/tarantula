@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
@@ -16,12 +15,12 @@ from rich.console import Console
 
 from .chunker import chunk_text
 from .config import load_urls_config, load_variables_config
+from .contextual_extractor import extract_all
 from .crawler import crawl_site
-from .extractor import MapInput, extract_from_chunk
 from .llm import LLMClient, OpenAIClient
 from .logging_setup import configure as configure_logging
 from .playwright_fetcher import playwright_fetch
-from .reducer import Candidate, reduce_candidates
+from .retriever import retrieve_for_variable, Hit
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -71,26 +70,11 @@ class Reporter:
         color = {"ok": "green", "partial": "yellow", "failed": "red"}.get(status, "white")
         self._emit(f"  [dim]crawl[/] [{color}]{status}[/]: {pages} page(s)")
 
-    def extract_start(self, n_pages: int) -> None:
-        self._emit(f"  [dim]extracting (map) across {n_pages} page(s)...[/]")
+    def extract_start(self, n_vars: int) -> None:
+        self._emit(f"  [dim]extracting {n_vars} variable(s) from retrieved context...[/]")
 
-    def extract_progress(self, chunk_i: int, chunk_n: int, url: str) -> None:
-        shown = url if len(url) <= 60 else url[:57] + "..."
-        # Carriage-return for in-place update; don't use emit which adds \n
-        if not self.quiet:
-            self._console.print(
-                f"    [dim]chunk {chunk_i}/{chunk_n}[/] {shown}",
-                end="\r", soft_wrap=True,
-            )
-
-    def extract_done(self, chunks: int, candidates: int) -> None:
-        # Clear the in-place line then write the done line.
-        if not self.quiet:
-            self._console.print(" " * 100, end="\r")
-        self._emit(f"  [dim]extract done: {chunks} chunk(s), {candidates} candidate(s)[/]")
-
-    def reduce_start(self) -> None:
-        self._emit("  [dim]reducing (per-site reconciliation)...[/]")
+    def extract_done(self, n_vars: int) -> None:
+        self._emit(f"  [dim]extract done: {n_vars} variable(s) processed[/]")
 
     def site_done(self, extracted: int, total: int, required_missing: int) -> None:
         elapsed = time.monotonic() - self._site_started
@@ -117,18 +101,16 @@ class PipelineOptions:
     output_path: Optional[Path]
     db_path: Path
     data_dir: Path
-    map_model: str = "gpt-4o-mini"
-    reduce_model: str = "gpt-4o"
+    extract_model: str = "gpt-4o-mini"
     cache_ttl_seconds: int = 86400
     max_tokens: int = 2_000_000
     no_cache: bool = False
     quiet: bool = False
-    map_workers: int = 8
-    reduce_workers: int = 8
+    workers: int = 8
     llm_client: Optional[LLMClient] = None
     embed_model: str = "text-embedding-3-small"
     top_k: int = 20
-    retrieval: str = "hybrid"  # "hybrid" | "bm25" | "vec" | "off"
+    retrieval: str = "hybrid"  # "hybrid" | "bm25" | "vec"
     retrieval_candidates: int = 50  # BM25 and vector top-N before fusion
 
 
@@ -180,7 +162,6 @@ async def run_pipeline(opts: PipelineOptions) -> int:
         elif result.status == "failed":
             run_status_bits |= 0b100
 
-        candidates_by_var: dict[str, list[Candidate]] = {}
         page_rows = list(store.conn.execute(
             "SELECT p.id, p.url, p.title, p.cleaned_text FROM pages p "
             "JOIN crawl_pages cp ON cp.page_id = p.id "
@@ -189,108 +170,69 @@ async def run_pipeline(opts: PipelineOptions) -> int:
         ).fetchall())
 
         pages_with_text = [r for r in page_rows if r[3]]
-        reporter.extract_start(n_pages=len(pages_with_text))
 
-        # Pre-compute chunks per page so we can report accurate progress.
+        # Pre-compute chunks per page.
         chunks_per_page = [
             (page_id, url, title, list(chunk_text(cleaned)))
             for page_id, url, title, cleaned in pages_with_text
         ]
-        total_chunks = sum(len(cs) for _, _, _, cs in chunks_per_page)
 
-        # Persist chunks serially (SQLite, single-threaded) and build the
-        # task list for the parallel map step.
-        tasks: list[tuple[int, str, str | None, str]] = []
+        # Persist chunks serially (SQLite, single-threaded).
         for page_id, url, title, chunks in chunks_per_page:
             for chunk in chunks:
-                chunk_id = store.save_chunk(
+                store.save_chunk(
                     page_id=page_id, ordinal=chunk.ordinal,
                     text=chunk.text, token_count=chunk.token_count,
                 )
-                tasks.append((chunk_id, url, title, chunk.text))
 
-        # --- Embed any chunks that don't yet have a vector (retrieval step) ---
-        # Only the hybrid and vec modes need embeddings; pure bm25 avoids the
-        # embedding API entirely, so users without an API key can still run it.
+        # --- Embed any chunks that don't yet have a vector (hybrid/vec only). ---
         if opts.retrieval in ("hybrid", "vec"):
-            ids = [t[0] for t in tasks]
-            rows_to_embed: list[tuple[int, str]] = []
-            if ids:
-                placeholders = ",".join("?" * len(ids))
-                existing_null = {
-                    r[0] for r in store.conn.execute(
-                        f"SELECT id FROM chunks "
-                        f"WHERE id IN ({placeholders}) AND embedding IS NULL",
-                        ids,
+            chunk_ids = [r[0] for r in store.conn.execute(
+                "SELECT c.id FROM chunks c "
+                "JOIN crawl_pages cp ON cp.page_id = c.page_id "
+                "WHERE cp.crawl_id = ? AND c.embedding IS NULL",
+                (result.crawl_id,),
+            )]
+            if chunk_ids:
+                placeholders = ",".join("?" * len(chunk_ids))
+                rows = store.conn.execute(
+                    f"SELECT id, text FROM chunks WHERE id IN ({placeholders})",
+                    chunk_ids,
+                ).fetchall()
+                for i in range(0, len(rows), 64):
+                    batch = rows[i:i + 64]
+                    vecs = client.embed(
+                        [t for _cid, t in batch], model=opts.embed_model,
                     )
-                }
-                rows_to_embed = [
-                    (cid, text) for (cid, _url, _title, text) in tasks
-                    if cid in existing_null
-                ]
-            if rows_to_embed:
-                # Batch to keep requests small; 64 chunks/req is a safe default.
-                for i in range(0, len(rows_to_embed), 64):
-                    batch = rows_to_embed[i:i + 64]
-                    vecs = client.embed([t for _cid, t in batch], model=opts.embed_model)
                     for (cid, _text), vec in zip(batch, vecs):
                         store.save_chunk_embedding(cid, vec, model=opts.embed_model)
 
-        # --- Retrieve top-k per variable; union the chunk IDs ---
-        if opts.retrieval != "off":
-            from .retriever import retrieve_for_variable
-            keep_ids: set[int] = set()
-            for v in vars_cfg.variables:
-                hits = retrieve_for_variable(
-                    store=store, crawl_id=result.crawl_id, variable=v,
-                    embed_fn=lambda texts: client.embed(texts, model=opts.embed_model),
-                    k=opts.top_k, mode=opts.retrieval,
-                    fts_candidates=opts.retrieval_candidates,
-                    vec_candidates=opts.retrieval_candidates,
-                )
-                keep_ids.update(h.chunk_id for h in hits)
-            before = len(tasks)
-            tasks = [t for t in tasks if t[0] in keep_ids]
-            total_chunks = len(tasks)
-            log.info("retrieval: %d/%d chunks kept for map", total_chunks, before)
-
-        def _extract(task: tuple[int, str, str | None, str]):
-            chunk_id, url, title, text = task
-            recs = extract_from_chunk(
-                client=client,
-                variables=vars_cfg.variables,
-                inp=MapInput(chunk_text=text, page_url=url, page_title=title),
-                model=opts.map_model,
+        # --- Retrieve top-k per variable. ---
+        hits_by_var: dict[str, list[Hit]] = {}
+        for v in vars_cfg.variables:
+            hits = retrieve_for_variable(
+                store=store, crawl_id=result.crawl_id, variable=v,
+                embed_fn=lambda texts: client.embed(
+                    texts, model=opts.embed_model
+                ),
+                k=opts.top_k, mode=opts.retrieval,
+                fts_candidates=opts.retrieval_candidates,
+                vec_candidates=opts.retrieval_candidates,
             )
-            return chunk_id, url, title, recs
+            hits_by_var[v.name] = hits
 
-        done_i = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=opts.map_workers) as ex:
-            for fut in concurrent.futures.as_completed([ex.submit(_extract, t) for t in tasks]):
-                chunk_id, url, title, recs = fut.result()
-                done_i += 1
-                reporter.extract_progress(done_i, total_chunks, url)
-                for r in recs:
-                    store.save_chunk_extraction(
-                        run_id=run_id, chunk_id=chunk_id,
-                        variable_name=r.variable_name,
-                        found=r.found, value=r.value, quote=r.quote,
-                    )
-                    if r.found:
-                        candidates_by_var.setdefault(r.variable_name, []).append(
-                            Candidate(value=r.value, quote=r.quote,
-                                      source_url=url, page_title=title)
-                        )
-
-        n_candidates = sum(len(v) for v in candidates_by_var.values())
-        reporter.extract_done(chunks=total_chunks, candidates=n_candidates)
-
-        reporter.reduce_start()
-        reduced = reduce_candidates(
-            client=client, variables=vars_cfg.variables,
-            candidates_by_var=candidates_by_var, model=opts.reduce_model,
-            max_workers=opts.reduce_workers,
+        # --- One LLM call per variable, in parallel. ---
+        reporter.extract_start(n_vars=len(vars_cfg.variables))
+        reduced = extract_all(
+            client=client,
+            variables=vars_cfg.variables,
+            hits_by_var=hits_by_var,
+            model=opts.extract_model,
+            max_workers=opts.workers,
         )
+        reporter.extract_done(n_vars=len(reduced))
+
+        # Persist each final extraction.
         for name, payload in reduced.items():
             store.save_extraction(
                 run_id=run_id,
@@ -305,7 +247,9 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                 run_status_bits |= 0b001
 
         extracted = sum(1 for v in reduced.values() if v.get("value") is not None)
-        missing_required = sum(1 for v in reduced.values() if v.get("required_missing"))
+        missing_required = sum(
+            1 for v in reduced.values() if v.get("required_missing")
+        )
         reporter.site_done(extracted, len(reduced), missing_required)
 
         sites_out.append({
@@ -356,18 +300,18 @@ def extract(
     output: Optional[Path] = typer.Option(None, "--output"),
     db: Path = typer.Option(Path("tarantula.db"), "--db"),
     data_dir: Path = typer.Option(Path("./data"), "--data-dir"),
-    map_model: str = typer.Option("gpt-4o-mini", "--map-model"),
-    reduce_model: str = typer.Option("gpt-4o", "--reduce-model"),
+    extract_model: str = typer.Option("gpt-4o-mini", "--extract-model",
+        help="Model used for the per-variable contextual extraction call."),
+    workers: int = typer.Option(8, "--workers",
+        help="Concurrent LLM calls during extraction."),
     cache_ttl: str = typer.Option("24h", "--cache-ttl"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     max_tokens: int = typer.Option(2_000_000, "--max-tokens"),
-    map_workers: int = typer.Option(8, "--map-workers", help="Concurrent LLM calls for the map step."),
-    reduce_workers: int = typer.Option(8, "--reduce-workers", help="Concurrent LLM calls for the reduce step."),
     embed_model: str = typer.Option("text-embedding-3-small", "--embed-model"),
     top_k: int = typer.Option(20, "--top-k",
         help="Top-k chunks per variable after retrieval."),
     retrieval: str = typer.Option("hybrid", "--retrieval",
-        help="hybrid | bm25 | vec | off (off = legacy full scan)."),
+        help="hybrid | bm25 | vec (retrieval is required)."),
     retrieval_candidates: int = typer.Option(50, "--retrieval-candidates",
         help="BM25 and vector top-N before RRF fusion."),
     verbose: int = typer.Option(0, "-v", "--verbose", count=True),
@@ -378,20 +322,25 @@ def extract(
     log_path = data_dir / "logs" / "run.jsonl"
     configure_logging(verbosity=verbose, log_path=log_path)
 
+    if retrieval not in ("hybrid", "bm25", "vec"):
+        typer.echo(
+            f"Error: --retrieval must be hybrid, bm25, or vec (got {retrieval!r}).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     opts = PipelineOptions(
         urls_path=urls,
         variables_path=variables,
         output_path=output,
         db_path=db,
         data_dir=data_dir,
-        map_model=map_model,
-        reduce_model=reduce_model,
+        extract_model=extract_model,
         cache_ttl_seconds=_parse_duration(cache_ttl),
         max_tokens=max_tokens,
         no_cache=no_cache,
         quiet=quiet,
-        map_workers=map_workers,
-        reduce_workers=reduce_workers,
+        workers=workers,
         embed_model=embed_model,
         top_k=top_k,
         retrieval=retrieval,
