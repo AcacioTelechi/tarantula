@@ -23,20 +23,28 @@ class LLMRequest:
 
 class LLMClient(Protocol):
     def complete_json(self, request: LLMRequest) -> dict[str, Any]: ...
+    def embed(self, texts: list[str], model: str) -> list[list[float]]: ...
 
 
 @dataclass
 class FakeLLMClient:
-    """Test double that returns scripted JSON responses.
+    """Test double that returns scripted JSON responses and embeddings.
 
-    Two modes (may be combined):
+    complete_json modes (may be combined):
       - list: responses returned in order via `responses` (legacy).
       - keyed: if request.schema_name matches a key in `responses_by_schema`,
         that response is returned. Useful when calls run concurrently.
+
+    embed modes:
+      - keyed: if a text matches `embeddings_by_text`, that vector is returned.
+      - fallback: deterministic 8-d vector derived from sha1(text).
     """
     responses: list[dict[str, Any]] = field(default_factory=list)
     responses_by_schema: dict[str, dict[str, Any]] = field(default_factory=dict)
+    embeddings_by_text: dict[str, list[float]] = field(default_factory=dict)
+    embed_dim: int = 8
     calls: list[LLMRequest] = field(default_factory=list)
+    embed_calls: list[tuple[list[str], str]] = field(default_factory=list)
     _cursor: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -50,6 +58,21 @@ class FakeLLMClient:
             r = self.responses[self._cursor]
             self._cursor += 1
             return r
+
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        import hashlib
+        with self._lock:
+            self.embed_calls.append((list(texts), model))
+            out: list[list[float]] = []
+            for t in texts:
+                if t in self.embeddings_by_text:
+                    out.append(list(self.embeddings_by_text[t]))
+                    continue
+                # Deterministic pseudo-embedding from sha1 bytes.
+                h = hashlib.sha1(t.encode("utf-8")).digest()
+                vec = [((h[i % len(h)] / 255.0) * 2.0) - 1.0 for i in range(self.embed_dim)]
+                out.append(vec)
+            return out
 
 
 class OpenAIClient:
