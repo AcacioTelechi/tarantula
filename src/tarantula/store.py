@@ -378,11 +378,14 @@ class Store:
         bm25() returns a *negative* number where smaller == better. We negate so
         larger == better for downstream fusion ergonomics. The query is sanitized
         to strip FTS5 reserved characters so natural-language descriptions /
-        example inputs are safe to pass verbatim.
+        example inputs are safe to pass verbatim. Words are joined with OR for
+        inclusive matching against multi-word queries.
         """
         safe = _sanitize_fts_query(query)
         if safe is None:
             return []
+        # Convert space-separated words to OR-joined for inclusive matching
+        fts_query = " OR ".join(safe.split())
         rows = self.conn.execute(
             "SELECT f.rowid, -bm25(chunks_fts) AS s "
             "FROM chunks_fts f "
@@ -390,7 +393,7 @@ class Store:
             "JOIN crawl_pages cp ON cp.page_id = c.page_id "
             "WHERE cp.crawl_id = ? AND chunks_fts MATCH ? "
             "ORDER BY s DESC LIMIT ?",
-            (crawl_id, safe, k),
+            (crawl_id, fts_query, k),
         ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
