@@ -216,3 +216,60 @@ def test_init_schema_backfills_fts_for_preexisting_chunks(tmp_path):
         "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'zorblatt'"
     ).fetchall()
     assert len(hits) == 1
+
+
+def _seed_two_chunks(tmp_path):
+    """Helper: crawl with two pages, one chunk each, linked to a crawl."""
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    run_id = store.start_run("urls", "vars")
+    crawl_id = store.start_crawl(run_id, "https://example.com")
+    p1 = store.save_page(url="https://example.com/a", raw_bytes=b"<a/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="A")
+    p2 = store.save_page(url="https://example.com/b", raw_bytes=b"<b/>",
+                         http_status=200, content_type="text/html",
+                         fetcher="http", title="B")
+    store.link_page(crawl_id, p1, depth=0, parent_url=None)
+    store.link_page(crawl_id, p2, depth=1, parent_url="https://example.com/a")
+    c1 = store.save_chunk(p1, 0, "The company was founded in 1998 by two engineers.", 10)
+    c2 = store.save_chunk(p2, 0, "Contact us at hello@example.com for sales.", 8)
+    return store, crawl_id, c1, c2
+
+
+def test_save_chunk_embedding_and_read_back(tmp_path):
+    from tarantula.embeddings import unpack
+    store, _crawl_id, c1, _c2 = _seed_two_chunks(tmp_path)
+    store.save_chunk_embedding(c1, [0.1, 0.2, 0.3], model="stub")
+    row = store.conn.execute(
+        "SELECT embedding, embedding_model FROM chunks WHERE id=?", (c1,)
+    ).fetchone()
+    assert row[1] == "stub"
+    got = unpack(row[0])
+    assert [round(x, 3) for x in got] == [0.1, 0.2, 0.3]
+
+
+def test_bm25_top_k_scopes_to_crawl(tmp_path):
+    store, crawl_id, c1, _c2 = _seed_two_chunks(tmp_path)
+    hits = store.bm25_top_k(crawl_id, "founded engineers", k=5)
+    assert hits and hits[0][0] == c1
+
+
+def test_vector_top_k_scopes_to_crawl_and_orders_by_cosine(tmp_path):
+    store, crawl_id, c1, c2 = _seed_two_chunks(tmp_path)
+    # Give c1 a vector aligned with the query; c2 an orthogonal one.
+    store.save_chunk_embedding(c1, [1.0, 0.0, 0.0], model="stub")
+    store.save_chunk_embedding(c2, [0.0, 1.0, 0.0], model="stub")
+    hits = store.vector_top_k(crawl_id, [1.0, 0.0, 0.0], k=5)
+    assert [h[0] for h in hits] == [c1, c2]
+    assert hits[0][1] > hits[1][1]
+
+
+def test_get_chunks_for_crawl_returns_text_and_url(tmp_path):
+    store, crawl_id, c1, c2 = _seed_two_chunks(tmp_path)
+    rows = store.get_chunks_for_crawl(crawl_id)
+    by_id = {r[0]: r for r in rows}
+    assert by_id[c1][2] == "https://example.com/a"
+    assert "founded" in by_id[c1][4]
+    assert set(by_id) == {c1, c2}

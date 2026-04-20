@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlsplit
 
+from . import embeddings
+
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -344,3 +346,67 @@ class Store:
              source_url, quote, reasoning, _now()),
         )
         self.conn.commit()
+
+    def save_chunk_embedding(
+        self, chunk_id: int, vec: list[float], model: str
+    ) -> None:
+        self.conn.execute(
+            "UPDATE chunks SET embedding=?, embedding_model=? WHERE id=?",
+            (embeddings.pack(vec), model, chunk_id),
+        )
+        self.conn.commit()
+
+    def bm25_top_k(
+        self, crawl_id: int, query: str, k: int
+    ) -> list[tuple[int, float]]:
+        """Returns [(chunk_id, bm25_score)] ranked best-first.
+
+        bm25() returns a *negative* number where smaller == better. We negate so
+        larger == better for downstream fusion ergonomics.
+        """
+        rows = self.conn.execute(
+            "SELECT f.rowid, -bm25(chunks_fts) AS s "
+            "FROM chunks_fts f "
+            "JOIN chunks c ON c.id = f.rowid "
+            "JOIN crawl_pages cp ON cp.page_id = c.page_id "
+            "WHERE cp.crawl_id = ? AND chunks_fts MATCH ? "
+            "ORDER BY s DESC LIMIT ?",
+            (crawl_id, query, k),
+        ).fetchall()
+        return [(r[0], float(r[1])) for r in rows]
+
+    def vector_top_k(
+        self, crawl_id: int, qvec: list[float], k: int
+    ) -> list[tuple[int, float]]:
+        """Brute-force cosine over all chunks in this crawl that have embeddings.
+
+        Fine for v1: chunks per crawl are in the hundreds-to-low-thousands.
+        Swap for a vector index later if profiling demands it.
+        """
+        rows = self.conn.execute(
+            "SELECT c.id, c.embedding "
+            "FROM chunks c "
+            "JOIN crawl_pages cp ON cp.page_id = c.page_id "
+            "WHERE cp.crawl_id = ? AND c.embedding IS NOT NULL",
+            (crawl_id,),
+        ).fetchall()
+        scored: list[tuple[int, float]] = []
+        for cid, blob in rows:
+            scored.append((cid, embeddings.cosine(qvec, embeddings.unpack(blob))))
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored[:k]
+
+    def get_chunks_for_crawl(
+        self, crawl_id: int
+    ) -> list[tuple[int, int, str, str | None, str]]:
+        """Returns [(chunk_id, page_id, page_url, page_title, chunk_text)]."""
+        rows = self.conn.execute(
+            "SELECT c.id, c.page_id, p.url, p.title, c.text "
+            "FROM chunks c "
+            "JOIN pages p ON p.id = c.page_id "
+            "JOIN crawl_pages cp ON cp.page_id = c.page_id "
+            "WHERE cp.crawl_id = ? "
+            "ORDER BY cp.depth, c.page_id, c.ordinal",
+            (crawl_id,),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3], r[4]) for r in rows]
