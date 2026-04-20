@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
@@ -122,6 +123,8 @@ class PipelineOptions:
     max_tokens: int = 2_000_000
     no_cache: bool = False
     quiet: bool = False
+    map_workers: int = 8
+    reduce_workers: int = 8
     llm_client: Optional[LLMClient] = None
 
 
@@ -190,22 +193,34 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             for page_id, url, title, cleaned in pages_with_text
         ]
         total_chunks = sum(len(cs) for _, _, _, cs in chunks_per_page)
-        chunk_i = 0
 
+        # Persist chunks serially (SQLite, single-threaded) and build the
+        # task list for the parallel map step.
+        tasks: list[tuple[int, str, str | None, str]] = []
         for page_id, url, title, chunks in chunks_per_page:
             for chunk in chunks:
-                chunk_i += 1
-                reporter.extract_progress(chunk_i, total_chunks, url)
                 chunk_id = store.save_chunk(
                     page_id=page_id, ordinal=chunk.ordinal,
                     text=chunk.text, token_count=chunk.token_count,
                 )
-                recs = extract_from_chunk(
-                    client=client,
-                    variables=vars_cfg.variables,
-                    inp=MapInput(chunk_text=chunk.text, page_url=url, page_title=title),
-                    model=opts.map_model,
-                )
+                tasks.append((chunk_id, url, title, chunk.text))
+
+        def _extract(task: tuple[int, str, str | None, str]):
+            chunk_id, url, title, text = task
+            recs = extract_from_chunk(
+                client=client,
+                variables=vars_cfg.variables,
+                inp=MapInput(chunk_text=text, page_url=url, page_title=title),
+                model=opts.map_model,
+            )
+            return chunk_id, url, title, recs
+
+        done_i = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=opts.map_workers) as ex:
+            for fut in concurrent.futures.as_completed([ex.submit(_extract, t) for t in tasks]):
+                chunk_id, url, title, recs = fut.result()
+                done_i += 1
+                reporter.extract_progress(done_i, total_chunks, url)
                 for r in recs:
                     store.save_chunk_extraction(
                         run_id=run_id, chunk_id=chunk_id,
@@ -225,6 +240,7 @@ async def run_pipeline(opts: PipelineOptions) -> int:
         reduced = reduce_candidates(
             client=client, variables=vars_cfg.variables,
             candidates_by_var=candidates_by_var, model=opts.reduce_model,
+            max_workers=opts.reduce_workers,
         )
         for name, payload in reduced.items():
             store.save_extraction(
@@ -296,6 +312,8 @@ def extract(
     cache_ttl: str = typer.Option("24h", "--cache-ttl"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     max_tokens: int = typer.Option(2_000_000, "--max-tokens"),
+    map_workers: int = typer.Option(8, "--map-workers", help="Concurrent LLM calls for the map step."),
+    reduce_workers: int = typer.Option(8, "--reduce-workers", help="Concurrent LLM calls for the reduce step."),
     verbose: int = typer.Option(0, "-v", "--verbose", count=True),
     quiet: bool = typer.Option(False, "--quiet"),
 ) -> None:
@@ -316,6 +334,8 @@ def extract(
         max_tokens=max_tokens,
         no_cache=no_cache,
         quiet=quiet,
+        map_workers=map_workers,
+        reduce_workers=reduce_workers,
     )
     exit_code = asyncio.run(run_pipeline(opts))
     raise typer.Exit(code=exit_code)

@@ -46,29 +46,38 @@ async def test_pipeline_extracts_from_sample_site(httpserver, tmp_path, fixtures
         "founded_year": {"found": False, "value": None, "quote": None},
         "products": {"found": True, "value": ["Widget Pro", "Widget Lite"], "quote": "Widget Pro"},
     }
-    reduce_resp = {
-        "company_name": {
-            "value": "ACME Inc.",
-            "source_url": httpserver.url_for("/about"),
-            "quote": "ACME Inc. was founded in 1998.",
-            "reasoning": "About page states legal name.",
+    reduce_by_schema = {
+        "site_reduction_company_name": {
+            "company_name": {
+                "value": "ACME Inc.",
+                "source_url": httpserver.url_for("/about"),
+                "quote": "ACME Inc. was founded in 1998.",
+                "reasoning": "About page states legal name.",
+            },
         },
-        "founded_year": {
-            "value": 1998,
-            "source_url": httpserver.url_for("/about"),
-            "quote": "ACME Inc. was founded in 1998.",
-            "reasoning": "Explicit on /about.",
+        "site_reduction_founded_year": {
+            "founded_year": {
+                "value": 1998,
+                "source_url": httpserver.url_for("/about"),
+                "quote": "ACME Inc. was founded in 1998.",
+                "reasoning": "Explicit on /about.",
+            },
         },
-        "products": {
-            "value": ["Widget Pro", "Widget Lite"],
-            "sources": [
-                {"value_item": "Widget Pro", "source_url": httpserver.url_for("/products"), "quote": "Widget Pro"},
-                {"value_item": "Widget Lite", "source_url": httpserver.url_for("/products"), "quote": "Widget Lite"},
-            ],
-            "reasoning": "Listed on /products.",
+        "site_reduction_products": {
+            "products": {
+                "value": ["Widget Pro", "Widget Lite"],
+                "sources": [
+                    {"value_item": "Widget Pro", "source_url": httpserver.url_for("/products"), "quote": "Widget Pro"},
+                    {"value_item": "Widget Lite", "source_url": httpserver.url_for("/products"), "quote": "Widget Lite"},
+                ],
+                "reasoning": "Listed on /products.",
+            },
         },
     }
-    fake = FakeLLMClient(responses=[map_resp_index, map_resp_about, map_resp_products, reduce_resp])
+    fake = FakeLLMClient(
+        responses=[map_resp_index, map_resp_about, map_resp_products],
+        responses_by_schema=reduce_by_schema,
+    )
 
     opts = PipelineOptions(
         urls_path=urls_yaml,

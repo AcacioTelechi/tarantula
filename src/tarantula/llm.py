@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -26,18 +27,29 @@ class LLMClient(Protocol):
 
 @dataclass
 class FakeLLMClient:
-    """Test double that returns scripted JSON responses in order."""
-    responses: list[dict[str, Any]]
+    """Test double that returns scripted JSON responses.
+
+    Two modes (may be combined):
+      - list: responses returned in order via `responses` (legacy).
+      - keyed: if request.schema_name matches a key in `responses_by_schema`,
+        that response is returned. Useful when calls run concurrently.
+    """
+    responses: list[dict[str, Any]] = field(default_factory=list)
+    responses_by_schema: dict[str, dict[str, Any]] = field(default_factory=dict)
     calls: list[LLMRequest] = field(default_factory=list)
     _cursor: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def complete_json(self, request: LLMRequest) -> dict[str, Any]:
-        self.calls.append(request)
-        if self._cursor >= len(self.responses):
-            raise RuntimeError("FakeLLMClient: responses exhausted")
-        r = self.responses[self._cursor]
-        self._cursor += 1
-        return r
+        with self._lock:
+            self.calls.append(request)
+            if request.schema_name in self.responses_by_schema:
+                return self.responses_by_schema[request.schema_name]
+            if self._cursor >= len(self.responses):
+                raise RuntimeError("FakeLLMClient: responses exhausted")
+            r = self.responses[self._cursor]
+            self._cursor += 1
+            return r
 
 
 class OpenAIClient:

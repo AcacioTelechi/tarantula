@@ -13,12 +13,20 @@ def _vars():
 
 
 def test_reduce_emits_null_when_no_candidates():
-    fake = FakeLLMClient(responses=[{
-        "company_name": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-        "founded_year": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-        "products": {"value": None, "sources": [], "reasoning": "n/a"},
-        "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-    }])
+    fake = FakeLLMClient(responses_by_schema={
+        "site_reduction_company_name": {
+            "company_name": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+        "site_reduction_founded_year": {
+            "founded_year": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+        "site_reduction_products": {
+            "products": {"value": None, "sources": [], "reasoning": "n/a"},
+        },
+        "site_reduction_has_careers_page": {
+            "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+    })
     results = reduce_candidates(
         client=fake, variables=_vars(), candidates_by_var={}, model="fake",
     )
@@ -28,18 +36,26 @@ def test_reduce_emits_null_when_no_candidates():
 
 
 def test_reduce_picks_winner_per_scalar():
-    fake = FakeLLMClient(responses=[{
-        "company_name": {
-            "value": "ACME Inc.",
-            "source_url": "https://a.com/about",
-            "quote": "ACME Inc. is a private company.",
-            "reasoning": "From /about.",
+    fake = FakeLLMClient(responses_by_schema={
+        "site_reduction_company_name": {
+            "company_name": {
+                "value": "ACME Inc.",
+                "source_url": "https://a.com/about",
+                "quote": "ACME Inc. is a private company.",
+                "reasoning": "From /about.",
+            },
         },
-        "founded_year": {"value": 1998, "source_url": "https://a.com/history",
-                         "quote": "Founded in 1998.", "reasoning": "From history."},
-        "products": {"value": None, "sources": [], "reasoning": "none"},
-        "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-    }])
+        "site_reduction_founded_year": {
+            "founded_year": {"value": 1998, "source_url": "https://a.com/history",
+                             "quote": "Founded in 1998.", "reasoning": "From history."},
+        },
+        "site_reduction_products": {
+            "products": {"value": None, "sources": [], "reasoning": "none"},
+        },
+        "site_reduction_has_careers_page": {
+            "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+    })
     candidates = {
         "company_name": [
             Candidate(value="ACME Inc.", quote="ACME Inc. is a private company.",
@@ -56,19 +72,27 @@ def test_reduce_picks_winner_per_scalar():
 
 
 def test_reduce_arrays_include_sources_pairs():
-    fake = FakeLLMClient(responses=[{
-        "company_name": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-        "founded_year": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-        "products": {
-            "value": ["Widget Pro", "Widget Lite"],
-            "sources": [
-                {"value_item": "Widget Pro", "source_url": "https://a.com/p1", "quote": "Widget Pro is flagship."},
-                {"value_item": "Widget Lite", "source_url": "https://a.com/p2", "quote": "Widget Lite for small teams."},
-            ],
-            "reasoning": "Union across product pages.",
+    fake = FakeLLMClient(responses_by_schema={
+        "site_reduction_company_name": {
+            "company_name": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
         },
-        "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
-    }])
+        "site_reduction_founded_year": {
+            "founded_year": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+        "site_reduction_products": {
+            "products": {
+                "value": ["Widget Pro", "Widget Lite"],
+                "sources": [
+                    {"value_item": "Widget Pro", "source_url": "https://a.com/p1", "quote": "Widget Pro is flagship."},
+                    {"value_item": "Widget Lite", "source_url": "https://a.com/p2", "quote": "Widget Lite for small teams."},
+                ],
+                "reasoning": "Union across product pages.",
+            },
+        },
+        "site_reduction_has_careers_page": {
+            "has_careers_page": {"value": None, "source_url": None, "quote": None, "reasoning": "n/a"},
+        },
+    })
     candidates = {
         "products": [
             Candidate(value=["Widget Pro"], quote="Widget Pro is flagship.",
