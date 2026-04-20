@@ -106,21 +106,6 @@ def test_cleaned_text_upsert(store):
     assert row[0] == "hello world"
 
 
-def test_chunk_and_extraction_roundtrip(store):
-    run_id = store.start_run("", "")
-    pid = store.save_page("https://a.com/x", b"v", 200, "text/html", "http", "t")
-    cid = store.save_chunk(page_id=pid, ordinal=0, text="hello", token_count=1)
-    store.save_chunk_extraction(
-        run_id=run_id, chunk_id=cid, variable_name="v1",
-        found=True, value="hello", quote="hello",
-    )
-    rows = list(store.iter_chunk_extractions(run_id=run_id, crawl_id=None))
-    assert len(rows) == 1
-    assert rows[0].variable_name == "v1"
-    assert rows[0].found is True
-    assert rows[0].value == "hello"
-
-
 def test_mark_orphan_runs_as_failed_on_init(tmp_path):
     s = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
     s.init_schema()

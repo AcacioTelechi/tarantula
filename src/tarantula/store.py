@@ -130,18 +130,6 @@ class PageRecord:
     title: str | None
 
 
-@dataclass
-class ChunkExtraction:
-    variable_name: str
-    found: bool
-    value: Any
-    quote: str | None
-    chunk_id: int
-    page_id: int
-    url: str
-    page_title: str | None
-
-
 class Store:
     def __init__(self, db_path: str | Path, data_dir: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -291,55 +279,6 @@ class Store:
         )
         self.conn.commit()
         return cur.lastrowid
-
-    def save_chunk_extraction(
-        self,
-        run_id: int,
-        chunk_id: int,
-        variable_name: str,
-        found: bool,
-        value: Any,
-        quote: str | None,
-    ) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO chunk_extractions "
-            "(run_id, chunk_id, variable_name, found, value_json, quote, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (run_id, chunk_id, variable_name, 1 if found else 0,
-             json.dumps(value) if value is not None else None, quote, _now()),
-        )
-        self.conn.commit()
-
-    def iter_chunk_extractions(
-        self, run_id: int, crawl_id: int | None
-    ) -> Iterator[ChunkExtraction]:
-        sql = (
-            "SELECT ce.variable_name, ce.found, ce.value_json, ce.quote, "
-            "       ce.chunk_id, c.page_id, p.url, p.title "
-            "FROM chunk_extractions ce "
-            "JOIN chunks c ON c.id = ce.chunk_id "
-            "JOIN pages p ON p.id = c.page_id "
-            "WHERE ce.run_id = ?"
-        )
-        params: list[Any] = [run_id]
-        if crawl_id is not None:
-            sql += (
-                " AND c.page_id IN ("
-                "   SELECT page_id FROM crawl_pages WHERE crawl_id = ?"
-                " )"
-            )
-            params.append(crawl_id)
-        for row in self.conn.execute(sql, params):
-            yield ChunkExtraction(
-                variable_name=row[0],
-                found=bool(row[1]),
-                value=json.loads(row[2]) if row[2] is not None else None,
-                quote=row[3],
-                chunk_id=row[4],
-                page_id=row[5],
-                url=row[6],
-                page_title=row[7],
-            )
 
     def save_extraction(
         self,
