@@ -126,6 +126,10 @@ class PipelineOptions:
     map_workers: int = 8
     reduce_workers: int = 8
     llm_client: Optional[LLMClient] = None
+    embed_model: str = "text-embedding-3-small"
+    top_k: int = 20
+    retrieval: str = "hybrid"  # "hybrid" | "bm25" | "vec" | "off"
+    retrieval_candidates: int = 50  # BM25 and vector top-N before fusion
 
 
 async def run_pipeline(opts: PipelineOptions) -> int:
@@ -204,6 +208,39 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                     text=chunk.text, token_count=chunk.token_count,
                 )
                 tasks.append((chunk_id, url, title, chunk.text))
+
+        # --- Embed any chunks that don't yet have a vector (retrieval step) ---
+        if opts.retrieval != "off":
+            rows_to_embed = [
+                (cid, text) for (cid, _url, _title, text) in tasks
+                if store.conn.execute(
+                    "SELECT 1 FROM chunks WHERE id=? AND embedding IS NULL", (cid,)
+                ).fetchone()
+            ]
+            if rows_to_embed:
+                # Batch to keep requests small; 64 chunks/req is a safe default.
+                for i in range(0, len(rows_to_embed), 64):
+                    batch = rows_to_embed[i:i + 64]
+                    vecs = client.embed([t for _cid, t in batch], model=opts.embed_model)
+                    for (cid, _text), vec in zip(batch, vecs):
+                        store.save_chunk_embedding(cid, vec, model=opts.embed_model)
+
+            # --- Retrieve top-k per variable; union the chunk IDs ---
+            from .retriever import retrieve_for_variable
+            keep_ids: set[int] = set()
+            for v in vars_cfg.variables:
+                hits = retrieve_for_variable(
+                    store=store, crawl_id=result.crawl_id, variable=v,
+                    embed_fn=lambda texts: client.embed(texts, model=opts.embed_model),
+                    k=opts.top_k, mode=opts.retrieval,
+                    fts_candidates=opts.retrieval_candidates,
+                    vec_candidates=opts.retrieval_candidates,
+                )
+                keep_ids.update(h.chunk_id for h in hits)
+            before = len(tasks)
+            tasks = [t for t in tasks if t[0] in keep_ids]
+            total_chunks = len(tasks)
+            log.info("retrieval: %d/%d chunks kept for map", total_chunks, before)
 
         def _extract(task: tuple[int, str, str | None, str]):
             chunk_id, url, title, text = task
@@ -314,6 +351,13 @@ def extract(
     max_tokens: int = typer.Option(2_000_000, "--max-tokens"),
     map_workers: int = typer.Option(8, "--map-workers", help="Concurrent LLM calls for the map step."),
     reduce_workers: int = typer.Option(8, "--reduce-workers", help="Concurrent LLM calls for the reduce step."),
+    embed_model: str = typer.Option("text-embedding-3-small", "--embed-model"),
+    top_k: int = typer.Option(20, "--top-k",
+        help="Top-k chunks per variable after retrieval."),
+    retrieval: str = typer.Option("hybrid", "--retrieval",
+        help="hybrid | bm25 | vec | off (off = legacy full scan)."),
+    retrieval_candidates: int = typer.Option(50, "--retrieval-candidates",
+        help="BM25 and vector top-N before RRF fusion."),
     verbose: int = typer.Option(0, "-v", "--verbose", count=True),
     quiet: bool = typer.Option(False, "--quiet"),
 ) -> None:
@@ -336,6 +380,10 @@ def extract(
         quiet=quiet,
         map_workers=map_workers,
         reduce_workers=reduce_workers,
+        embed_model=embed_model,
+        top_k=top_k,
+        retrieval=retrieval,
+        retrieval_candidates=retrieval_candidates,
     )
     exit_code = asyncio.run(run_pipeline(opts))
     raise typer.Exit(code=exit_code)
