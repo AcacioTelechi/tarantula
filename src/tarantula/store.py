@@ -141,6 +141,14 @@ class Store:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN embedding BLOB")
         if "embedding_model" not in existing:
             self.conn.execute("ALTER TABLE chunks ADD COLUMN embedding_model TEXT")
+        # Backfill FTS index if chunks exist but triggers were missing
+        # (covers upgrades from pre-FTS schema versions). This is safe to run
+        # on every init_schema because 'rebuild' is idempotent.
+        chunks_count = self.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        if chunks_count > 0:
+            self.conn.execute(
+                "INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')"
+            )
         self.conn.execute(
             "UPDATE runs SET status='failed', finished_at=? "
             "WHERE status='running' AND finished_at IS NULL",

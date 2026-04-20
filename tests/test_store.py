@@ -167,4 +167,52 @@ def test_init_schema_idempotent_on_existing_db(tmp_path):
     from tarantula.store import Store
     db = tmp_path / "t.db"
     s1 = Store(db, data_dir=tmp_path / "data"); s1.init_schema(); s1.conn.close()
-    s2 = Store(db, data_dir=tmp_path / "data"); s2.init_schema()  # should not raise
+    s2 = Store(db, data_dir=tmp_path / "data"); s2.init_schema()
+    # Embedding columns still present after re-init.
+    cols = {r[1] for r in s2.conn.execute("PRAGMA table_info(chunks)")}
+    assert "embedding" in cols and "embedding_model" in cols
+    # FTS trigger still fires after re-init.
+    page_id = s2.save_page(
+        url="https://example.com", raw_bytes=b"<a/>",
+        http_status=200, content_type="text/html",
+        fetcher="http", title="ex",
+    )
+    s2.save_chunk(page_id=page_id, ordinal=0,
+                  text="idempotent trigger check banana", token_count=4)
+    hits = s2.conn.execute(
+        "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'banana'"
+    ).fetchall()
+    assert len(hits) == 1
+
+
+def test_init_schema_backfills_fts_for_preexisting_chunks(tmp_path):
+    """Simulate upgrading a DB that has chunks but no populated FTS index.
+
+    We create the DB, insert a chunk, then drop the FTS index and
+    re-run init_schema — the chunk must become searchable again.
+    """
+    import sqlite3
+    from tarantula.store import Store
+    db = tmp_path / "t.db"
+    s1 = Store(db, data_dir=tmp_path / "data")
+    s1.init_schema()
+    page_id = s1.save_page(
+        url="https://example.com", raw_bytes=b"<a/>",
+        http_status=200, content_type="text/html",
+        fetcher="http", title="ex",
+    )
+    s1.save_chunk(page_id=page_id, ordinal=0,
+                  text="pre-existing chunk with unique token zorblatt", token_count=6)
+    # Simulate a pre-FTS schema by dropping the FTS table and its triggers.
+    s1.conn.execute("DROP TABLE chunks_fts")
+    for t in ("chunks_ai", "chunks_ad", "chunks_au"):
+        s1.conn.execute(f"DROP TRIGGER IF EXISTS {t}")
+    s1.conn.commit()
+    s1.conn.close()
+
+    s2 = Store(db, data_dir=tmp_path / "data")
+    s2.init_schema()
+    hits = s2.conn.execute(
+        "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'zorblatt'"
+    ).fetchall()
+    assert len(hits) == 1
