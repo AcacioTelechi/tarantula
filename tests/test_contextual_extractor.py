@@ -124,6 +124,8 @@ def test_extract_array_drops_sources_with_bad_quotes():
                               hits=hits, model="fake")
     assert len(result["sources"]) == 2
     assert {s["value_item"] for s in result["sources"]} == {"Widget Pro", "Widget Lite"}
+    # Value list must stay in sync with filtered sources — no uncited items.
+    assert result["value"] == ["Widget Pro", "Widget Lite"]
 
 
 def test_extract_array_nulls_value_when_all_sources_invalid():
@@ -185,3 +187,37 @@ def test_extract_all_calls_llm_once_per_variable():
     assert len(fake.calls) == 2
     # Result ordering matches input variable order (stable for JSON output).
     assert list(results.keys()) == ["company_name", "products"]
+
+
+def test_extract_scalar_accepts_whitespace_normalized_quote():
+    """Chunker joins paragraphs with '\\n\\n'; LLM often returns the quote
+    with a single space. Substring match must still succeed."""
+    hits = [_hit(1, "https://ex.com/a", "ACME Inc. was founded\n\nin 1998.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.",
+            "source_url": "https://ex.com/a",
+            "quote": "ACME Inc. was founded in 1998.",
+            "reasoning": "from about page",
+        }
+    })
+    result = extract_variable(client=fake, variable=_scalar_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] == "ACME Inc."
+    assert result["quote"] == "ACME Inc. was founded in 1998."
+
+
+def test_quote_fabrication_still_blocked_with_whitespace_normalization():
+    """A genuinely fabricated quote must still fail even after normalization."""
+    hits = [_hit(1, "https://ex.com/a", "Completely unrelated content.")]
+    fake = FakeLLMClient(responses_by_schema={
+        "extract_company_name": {
+            "value": "ACME Inc.",
+            "source_url": "https://ex.com/a",
+            "quote": "ACME Inc. was founded in 1998.",
+            "reasoning": "hallucinated",
+        }
+    })
+    result = extract_variable(client=fake, variable=_scalar_spec(),
+                              hits=hits, model="fake")
+    assert result["value"] is None

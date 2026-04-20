@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import re
 from typing import Any
 
 from .config import VariableSpec
@@ -88,9 +89,22 @@ def _render_user_prompt(v: VariableSpec, hits: list[Hit]) -> str:
     return "\n".join(lines)
 
 
+_WS = re.compile(r"\s+")
+
+
+def _normalize_ws(s: str) -> str:
+    return _WS.sub(" ", s).strip()
+
+
 def _quote_in_any(chunk_texts: dict[str, list[str]], url: str, quote: str) -> bool:
+    """True if `quote` appears verbatim — or whitespace-normalized — inside
+    any chunk served from `url`. Verifies source grounding, not that `value`
+    was actually derived from `quote` (the system prompt enforces that)."""
+    nq = _normalize_ws(quote) if quote else ""
     for text in chunk_texts.get(url, []):
-        if quote in text:
+        if quote and quote in text:
+            return True
+        if nq and nq in _normalize_ws(text):
             return True
     return False
 
@@ -103,15 +117,14 @@ def _validate_and_finalize(
         chunk_texts.setdefault(h.url, []).append(h.text)
 
     if v.type == "array":
-        value = raw.get("value")
         sources = raw.get("sources", []) or []
         valid = [
             s for s in sources
             if s.get("quote") and s.get("source_url")
             and _quote_in_any(chunk_texts, s["source_url"], s["quote"])
         ]
-        if not valid:
-            value = None
+        # Rebuild value from validated sources so value and sources stay in sync.
+        value = [s["value_item"] for s in valid] if valid else None
         return {
             "value": value,
             "sources": valid,
