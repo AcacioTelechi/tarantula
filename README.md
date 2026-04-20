@@ -147,8 +147,45 @@ from variable name to `{value, source_url, quote, reasoning, required_missing}`.
 | `--no-cache` | off | Ignore the cache; re-fetch and re-extract. |
 | `--map-workers` | `8` | Concurrent LLM calls during map step. |
 | `--reduce-workers` | `8` | Concurrent LLM calls during reduce step. |
+| `--retrieval` | `hybrid` | `hybrid`, `bm25`, `vec`, or `off` (off = legacy full-scan). See [Retrieval](#retrieval). |
+| `--top-k` | `20` | Chunks per variable kept after retrieval. |
+| `--retrieval-candidates` | `50` | BM25 and vector top-N fetched before RRF fusion. |
+| `--embed-model` | `text-embedding-3-small` | Embedding model for chunks and queries. |
 | `-v` / `--verbose` | `0` | Increase log verbosity (repeatable). |
 | `--quiet` | off | Suppress progress output on stderr. |
+
+## Retrieval
+
+By default Tarantula runs **hybrid retrieval** (BM25 + dense embeddings,
+fused by Reciprocal Rank Fusion) to narrow the LLM map step to the chunks
+most relevant to each variable. This cuts cost roughly in proportion to
+`top_k / total_chunks` without changing output quality on well-described
+variables.
+
+Embeddings are persisted in the SQLite DB — re-runs are free. BM25 uses
+SQLite's built-in FTS5 extension.
+
+### Inspecting retrieval (`tarantula retrieve`)
+
+Run retrieval against an existing DB without re-crawling or re-extracting.
+Handy for iterating on a variable's `description` or `examples`:
+
+    tarantula retrieve \
+      --db tarantula.db --data-dir ./data \
+      --variables variables.yaml \
+      --seed-url https://example.com \
+      --variable founded_year \
+      --k 10 --show-text
+
+Useful flags:
+- `--mode hybrid|bm25|vec` — isolate one retrieval leg. `bm25` never calls
+  the embedding API, so no `OPENAI_API_KEY` is needed for that mode.
+- `--crawl-id <N>` — pick a specific crawl (overrides `--seed-url`).
+- Omit `--variable` to retrieve for every variable in the file.
+- `--json` — machine-readable output for piping into other tools.
+
+Each hit prints its RRF score plus the `bm25_rank` and `vec_rank` that
+contributed, so you can see exactly which leg pulled the chunk in.
 
 ## Exit codes
 
