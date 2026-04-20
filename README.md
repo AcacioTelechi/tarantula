@@ -141,29 +141,35 @@ from variable name to `{value, source_url, quote, reasoning, required_missing}`.
 | `--output` | stdout | Write results JSON to this path. |
 | `--db` | `tarantula.db` | SQLite cache + audit store. |
 | `--data-dir` | `./data` | Raw HTML and run logs live here. |
-| `--map-model` | `gpt-4o-mini` | Model for per-chunk extraction. |
-| `--reduce-model` | `gpt-4o` | Model for per-site reconciliation. |
+| `--extract-model` | `gpt-4o-mini` | Model for the per-variable extraction call. |
 | `--cache-ttl` | `24h` | Cache TTL (`30s`, `10m`, `24h`, `7d`, or seconds). |
 | `--no-cache` | off | Ignore the cache; re-fetch and re-extract. |
-| `--map-workers` | `8` | Concurrent LLM calls during map step. |
-| `--reduce-workers` | `8` | Concurrent LLM calls during reduce step. |
-| `--retrieval` | `hybrid` | `hybrid`, `bm25`, `vec`, or `off` (off = legacy full-scan). See [Retrieval](#retrieval). |
+| `--workers` | `8` | Concurrent per-variable LLM calls. |
+| `--retrieval` | `hybrid` | `hybrid`, `bm25`, or `vec`. See [Retrieval + Extraction](#retrieval--extraction). |
 | `--top-k` | `20` | Chunks per variable kept after retrieval. |
 | `--retrieval-candidates` | `50` | BM25 and vector top-N fetched before RRF fusion. |
 | `--embed-model` | `text-embedding-3-small` | Embedding model for chunks and queries. |
 | `-v` / `--verbose` | `0` | Increase log verbosity (repeatable). |
 | `--quiet` | off | Suppress progress output on stderr. |
 
-## Retrieval
+## Retrieval + Extraction
 
-By default Tarantula runs **hybrid retrieval** (BM25 + dense embeddings,
-fused by Reciprocal Rank Fusion) to narrow the LLM map step to the chunks
-most relevant to each variable. This cuts cost roughly in proportion to
-`top_k / total_chunks` without changing output quality on well-described
-variables.
+Tarantula extracts variables in two stages:
+
+1. **Hybrid retrieval** (BM25 + dense embeddings, fused by Reciprocal Rank
+   Fusion) selects the top-k chunks most relevant to each variable.
+2. **Contextual extraction** sends *one LLM call per variable*, passing the
+   variable spec and its top-k chunks as sources. The model returns the final
+   typed value plus the source URL and verbatim quote that support it; a
+   post-hoc check nulls the value if the quote isn't actually a substring of
+   the cited source (tolerant of whitespace differences).
+
+That's `N_variables` LLM calls per site regardless of chunk count — a big
+drop from the earlier map-per-chunk + reduce-per-variable pipeline.
 
 Embeddings are persisted in the SQLite DB — re-runs are free. BM25 uses
-SQLite's built-in FTS5 extension.
+SQLite's built-in FTS5 extension, so `--retrieval bm25` runs without an
+`OPENAI_API_KEY` (the embedding step is skipped entirely).
 
 ### Inspecting retrieval (`tarantula retrieve`)
 
