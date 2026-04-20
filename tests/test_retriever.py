@@ -100,3 +100,36 @@ def test_retrieve_for_variable_mode_bm25_skips_embedding(tmp_path):
     )
     assert [h.chunk_id for h in hits] == [c1]
     assert called == []  # mode=bm25 must not call the embedder
+
+
+def test_retrieve_for_variable_mode_vec_skips_bm25(tmp_path, monkeypatch):
+    from tarantula.store import Store
+    store = Store(tmp_path / "t.db", data_dir=tmp_path / "data")
+    store.init_schema()
+    run_id = store.start_run("urls", "vars")
+    crawl_id = store.start_crawl(run_id, "https://ex.com")
+    p = store.save_page(url="https://ex.com/a", raw_bytes=b"<a/>",
+                        http_status=200, content_type="text/html",
+                        fetcher="http", title="A")
+    store.link_page(crawl_id, p, depth=0, parent_url=None)
+    c1 = store.save_chunk(p, 0, "aligned", 2)
+    store.save_chunk_embedding(c1, [1.0, 0.0], model="stub")
+
+    bm25_calls = []
+    real_bm25 = store.bm25_top_k
+    def spy(*a, **kw):
+        bm25_calls.append((a, kw))
+        return real_bm25(*a, **kw)
+    monkeypatch.setattr(store, "bm25_top_k", spy)
+
+    spec = _spec()
+    fake = FakeLLMClient(embeddings_by_text={
+        build_query(spec): [1.0, 0.0],
+    })
+    hits = retrieve_for_variable(
+        store=store, crawl_id=crawl_id, variable=spec,
+        embed_fn=lambda texts: fake.embed(texts, model="stub"),
+        k=5, mode="vec",
+    )
+    assert [h.chunk_id for h in hits] == [c1]
+    assert bm25_calls == []  # mode=vec must not call bm25_top_k

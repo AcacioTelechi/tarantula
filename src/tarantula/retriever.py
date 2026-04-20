@@ -86,10 +86,12 @@ def retrieve_for_variable(
         vec_ids = [cid for cid, _score in
                    store.vector_top_k(crawl_id, qvec, vec_candidates)]
 
+    # Always use RRF so scores are comparable across modes. Passing an empty
+    # list for the absent leg degenerates to 1/(k + rank) from the present leg.
     if mode == "bm25":
-        fused = [(cid, 1.0 / (1 + i), i + 1, None) for i, cid in enumerate(bm25_ids)]
+        fused = rrf_fuse(bm25_ids, [])
     elif mode == "vec":
-        fused = [(cid, 1.0 / (1 + i), None, i + 1) for i, cid in enumerate(vec_ids)]
+        fused = rrf_fuse([], vec_ids)
     else:
         fused = rrf_fuse(bm25_ids, vec_ids)
 
