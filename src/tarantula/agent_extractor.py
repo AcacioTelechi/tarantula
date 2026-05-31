@@ -53,6 +53,18 @@ def _system_prompt(v: VariableSpec) -> str:
         lines.append("Examples:")
         for ex in v.examples:
             lines.append(f"  - input: {ex.input!r} -> output: {ex.output!r}")
+    if v.type == "array":
+        lines.append(
+            "Array precision: include an item ONLY if a page explicitly "
+            "presents it as belonging to this variable (e.g., an actual "
+            "funder/sponsor, or the organization's own channel). Exclude "
+            "entities merely mentioned in passing, unrelated third parties, "
+            "government/agency bodies that are not the subject, and generic "
+            "platform or policy URLs (e.g. a social network's own privacy "
+            "page). Never invent placeholder items. Prefer fewer well-grounded "
+            "items over a long noisy list. Search several relevant pages before "
+            "answering so the list is reasonably complete."
+        )
     return "\n".join(lines)
 
 

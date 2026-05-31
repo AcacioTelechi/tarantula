@@ -244,3 +244,13 @@ def test_agent_prompt_bounded_on_large_corpus():
         for block in call.user.split("OBSERVATION: ")[1:]:
             obs = block.split("\n\n")[0]
             assert len(obs) <= _MAX_OBS_CHARS + 40
+
+
+def test_system_prompt_adds_array_precision_only_for_arrays():
+    from tarantula.agent_extractor import _system_prompt
+    arr = VariableSpec(name="emp_fin", type="array", items="string",
+                       description="funders", extraction_type="agent")
+    scalar = VariableSpec(name="cnpj", type="string", description="id",
+                          extraction_type="agent")
+    assert "Array precision" in _system_prompt(arr)
+    assert "Array precision" not in _system_prompt(scalar)
