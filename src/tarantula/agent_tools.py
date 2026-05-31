@@ -59,8 +59,13 @@ def read_page(corpus: Corpus, url: str, max_chars: int = 6000) -> dict[str, Any]
     return {"error": f"no page with url {url!r}"}
 
 
-def list_pages(corpus: Corpus) -> dict[str, Any]:
-    """List every page's url, title, and character count."""
-    return {"pages": [
-        {"url": d.url, "title": d.title, "chars": len(d.text)} for d in corpus.docs
-    ]}
+def list_pages(corpus: Corpus, max_pages: int = 50) -> dict[str, Any]:
+    """List pages' url, title, and character count, capped at ``max_pages``.
+    On a large corpus only the first ``max_pages`` are returned (``truncated``
+    is True, ``total`` is the real count) — use ``grep`` to search all pages."""
+    docs = corpus.docs
+    pages = [
+        {"url": d.url, "title": d.title, "chars": len(d.text)}
+        for d in docs[:max_pages]
+    ]
+    return {"pages": pages, "total": len(docs), "truncated": len(docs) > max_pages}

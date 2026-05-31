@@ -65,3 +65,17 @@ def test_list_pages_returns_url_title_chars():
         "url": "https://a.example/", "title": "Home",
         "chars": len("Welcome to A.\nCNPJ: 12.345.678/0001-90\n"),
     }
+
+
+def test_list_pages_caps_entries_and_reports_total():
+    corpus = Corpus.from_pages([(f"https://x/{i}", f"t{i}", "x") for i in range(500)])
+    out = list_pages(corpus, max_pages=50)
+    assert len(out["pages"]) == 50
+    assert out["total"] == 500
+    assert out["truncated"] is True
+
+
+def test_list_pages_small_corpus_not_truncated():
+    out = list_pages(Corpus.from_pages([("u", "t", "x")]))
+    assert out["truncated"] is False
+    assert out["total"] == 1

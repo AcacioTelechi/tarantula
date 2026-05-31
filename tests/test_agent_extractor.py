@@ -206,3 +206,41 @@ def test_extract_all_agent_empty_returns_empty():
     out = extract_all_agent(client=fake, variables=[], corpus=_corpus(),
                             model="fake")
     assert out == {}
+
+
+def test_agent_prompt_bounded_on_large_corpus():
+    # Regression: on an 800-page corpus the agent prompt grew past the model's
+    # 128k context. The prompt must stay bounded regardless of corpus size or
+    # number of steps (sliding-window transcript + per-observation cap).
+    from tarantula.agent_extractor import _MAX_PROMPT_CHARS, _MAX_OBS_CHARS
+
+    pages = [
+        (f"https://x.example/{'segment-' * 8}{i}", f"Page {i}",
+         f"conteúdo da página {i} " * 60)
+        for i in range(500)
+    ]
+    corpus = Corpus.from_pages(pages)
+
+    # Nine list_pages calls (the worst accumulation) followed by a null answer.
+    responses = [
+        {"thought": "scan", "action": "list_pages", "pattern": None,
+         "ignore_case": None, "url": None, "answer": None}
+        for _ in range(9)
+    ]
+    responses.append(
+        {"thought": "stop", "action": "answer", "pattern": None,
+         "ignore_case": None, "url": None,
+         "answer": {"value": None, "source_url": None, "quote": None,
+                    "reasoning": "n/a"}})
+
+    fake = FakeLLMClient(responses=responses)
+    out = extract_variable_agent(
+        client=fake, variable=_var(), corpus=corpus, model="fake", max_steps=10)
+
+    assert out["value"] is None
+    assert fake.calls, "agent made no calls"
+    for call in fake.calls:
+        assert len(call.user) <= _MAX_PROMPT_CHARS + 200
+        for block in call.user.split("OBSERVATION: ")[1:]:
+            obs = block.split("\n\n")[0]
+            assert len(obs) <= _MAX_OBS_CHARS + 40

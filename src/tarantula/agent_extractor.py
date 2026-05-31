@@ -14,6 +14,14 @@ from .llm import LLMClient, LLMRequest
 
 DEFAULT_MAX_STEPS = 8
 
+# The agent re-sends its transcript each step. On a large corpus a single
+# observation (e.g. list_pages) or accumulation across steps can blow the
+# model's context window, so we bound both: any one observation is truncated to
+# _MAX_OBS_CHARS, and the assembled prompt keeps the instructions plus only the
+# most recent observations that fit in _MAX_PROMPT_CHARS (~17k tokens worst case).
+_MAX_OBS_CHARS = 16000
+_MAX_PROMPT_CHARS = 60000
+
 SYSTEM_HEADER = (
     "You extract ONE typed variable from a crawled website by searching its "
     "pages with tools. Each turn, return a JSON object with a 'thought', an "
@@ -127,6 +135,35 @@ def _run_tool(action: str, raw: dict[str, Any], corpus: Corpus) -> dict[str, Any
     return {"error": f"unknown action {action!r}"}
 
 
+def _truncate(s: str, limit: int) -> str:
+    return s if len(s) <= limit else s[:limit] + " …[truncated]"
+
+
+def _assemble_user(transcript: list[str]) -> str:
+    """Join the transcript, keeping the leading instructions plus the most
+    recent observations within a char budget. Bounds the prompt so it can't grow
+    past the model's context window across steps or on large corpora."""
+    head = transcript[0]
+    rest = transcript[1:]
+    kept: list[str] = []
+    total = len(head)
+    for entry in reversed(rest):
+        if kept and total + len(entry) + 2 > _MAX_PROMPT_CHARS:
+            break
+        kept.append(entry)
+        total += len(entry) + 2
+    kept.reverse()
+    omitted = len(rest) - len(kept)
+    parts = [head]
+    if omitted:
+        parts.append(
+            f"[... {omitted} earlier observation(s) omitted to save context; "
+            "re-run a tool if you need that information again ...]"
+        )
+    parts.extend(kept)
+    return "\n\n".join(parts)
+
+
 def extract_variable_agent(
     *, client: LLMClient, variable: VariableSpec, corpus: Corpus,
     model: str, max_steps: int,
@@ -146,7 +183,7 @@ def extract_variable_agent(
     for _step in range(max_steps):
         req = LLMRequest(
             system=system,
-            user="\n\n".join(transcript),
+            user=_assemble_user(transcript),
             json_schema=schema,
             model=model,
             temperature=0.0,
@@ -164,7 +201,8 @@ def extract_variable_agent(
             )
             continue
         obs = _run_tool(action, raw, corpus)
-        transcript.append(f"OBSERVATION: {json.dumps(obs, ensure_ascii=False)}")
+        obs_str = _truncate(json.dumps(obs, ensure_ascii=False), _MAX_OBS_CHARS)
+        transcript.append(f"OBSERVATION: {obs_str}")
 
     return _null_payload(variable, f"step budget ({max_steps}) exhausted")
 
