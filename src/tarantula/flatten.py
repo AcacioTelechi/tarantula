@@ -1,7 +1,11 @@
 """Flatten a run payload (the JSON emitted by `tarantula extract`) into wide
-CSV rows: one row per site, each variable expanded into
-``<var>_value / _source_url / _quote / _reasoning / _required_missing`` columns."""
+rows — one row per site, each variable expanded into
+``<var>_value / _source_url / _quote / _reasoning / _required_missing`` columns
+— writable as CSV or XLSX."""
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
 
 # Sub-fields of each variable object, in the order they become columns.
 _VAR_FIELDS = ("value", "source_url", "quote", "reasoning", "required_missing")
@@ -48,3 +52,24 @@ def flatten_run(payload: dict) -> tuple[list[str], list[dict]]:
         rows.append(row)
 
     return fields, rows
+
+
+def _xlsx_cell(value: Any) -> Any:
+    """openpyxl only accepts scalar cell types; stringify anything else (e.g. an
+    array variable whose ``_value`` column holds a list)."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def write_xlsx(fields: list[str], rows: list[dict], path: str | Path) -> None:
+    """Write flattened rows to an .xlsx workbook: a header row plus one row per
+    site, columns in ``fields`` order."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(list(fields))
+    for row in rows:
+        ws.append([_xlsx_cell(row.get(f, "")) for f in fields])
+    wb.save(str(path))

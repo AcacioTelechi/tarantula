@@ -106,7 +106,7 @@ class PipelineOptions:
     output_path: Optional[Path]
     db_path: Path
     data_dir: Path
-    extract_model: str = "gpt-4o-mini"
+    extract_model: str = "gpt-5.4-nano"
     cache_ttl_seconds: int = 86400
     max_tokens: int = 2_000_000
     no_cache: bool = False
@@ -326,7 +326,7 @@ def extract(
     output: Optional[Path] = typer.Option(None, "--output"),
     db: Path = typer.Option(Path("tarantula.db"), "--db"),
     data_dir: Path = typer.Option(Path("./data"), "--data-dir"),
-    extract_model: str = typer.Option("gpt-4o-mini", "--extract-model",
+    extract_model: str = typer.Option("gpt-5.4-nano", "--extract-model",
         help="Model used for the per-variable contextual extraction call."),
     workers: int = typer.Option(8, "--workers",
         help="Concurrent LLM calls during extraction."),
@@ -479,19 +479,23 @@ def flatten(
     input: Path = typer.Argument(..., exists=True, readable=True,
         help="Path to a run JSON file produced by `tarantula extract`."),
     output: Optional[Path] = typer.Option(None, "--output", "-o",
-        help="Write CSV here. Default: print to stdout."),
+        help="Write here. An .xlsx path produces an Excel workbook; any other "
+             "path (or stdout, the default) produces CSV."),
 ) -> None:
-    """Flatten a run JSON into a wide CSV: one row per site, each variable
-    expanded into <var>_value/_source_url/_quote/_reasoning/_required_missing."""
+    """Flatten a run JSON into a wide table: one row per site, each variable
+    expanded into <var>_value/_source_url/_quote/_reasoning/_required_missing.
+    Output is CSV, or XLSX when --output ends in .xlsx."""
     import csv
     import io
 
-    from .flatten import flatten_run
+    from .flatten import flatten_run, write_xlsx
 
     payload = json.loads(input.read_text())
     fields, rows = flatten_run(payload)
 
-    if output:
+    if output and output.suffix.lower() == ".xlsx":
+        write_xlsx(fields, rows, output)
+    elif output:
         with output.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writeheader()

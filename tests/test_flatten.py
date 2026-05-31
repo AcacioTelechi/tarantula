@@ -137,3 +137,63 @@ def test_flatten_command_writes_csv_to_stdout_without_output(tmp_path):
     rows = list(reader)
     assert len(rows) == 2
     assert rows[0]["nome_value"] == "Instituto A"
+
+
+def test_write_xlsx_header_and_rows(tmp_path):
+    from openpyxl import load_workbook
+    from tarantula.flatten import write_xlsx
+    fields, rows = flatten_run(_payload())
+    out = tmp_path / "out.xlsx"
+    write_xlsx(fields, rows, out)
+
+    ws = load_workbook(out).active
+    header = [c.value for c in ws[1]]
+    assert header == fields
+    data = list(ws.iter_rows(min_row=2, values_only=True))
+    assert len(data) == 2
+    # nome_value column matches the payload for the first site.
+    nome_col = fields.index("nome_value")
+    assert data[0][nome_col] == "Instituto A"
+
+
+def test_write_xlsx_stringifies_list_values(tmp_path):
+    # Array variables put a list in their _value column; xlsx cells must be
+    # scalar, so the list is stringified rather than crashing openpyxl.
+    from openpyxl import load_workbook
+    from tarantula.flatten import write_xlsx
+    payload = {
+        "run_id": 1, "started_at": "t", "finished_at": "t",
+        "sites": [{
+            "seed_url": "s", "crawl_status": "ok", "pages_fetched": 1,
+            "variables": {
+                "emp_fin": {"value": ["Acme", "Globex"], "sources": [],
+                            "reasoning": "r", "required_missing": False},
+            },
+        }],
+    }
+    fields, rows = flatten_run(payload)
+    out = tmp_path / "arr.xlsx"
+    write_xlsx(fields, rows, out)
+    ws = load_workbook(out).active
+    col = fields.index("emp_fin_value")
+    cell = list(ws.iter_rows(min_row=2, values_only=True))[0][col]
+    assert isinstance(cell, str)
+    assert "Acme" in cell and "Globex" in cell
+
+
+def test_flatten_command_writes_xlsx_by_extension(tmp_path):
+    from openpyxl import load_workbook
+    in_path = tmp_path / "out.json"
+    in_path.write_text(json.dumps(_payload()))
+    out_path = tmp_path / "out.xlsx"
+
+    result = CliRunner().invoke(app, [
+        "flatten", str(in_path), "-o", str(out_path),
+    ], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+
+    ws = load_workbook(out_path).active
+    header = [c.value for c in ws[1]]
+    assert "nome_value" in header
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    assert len(rows) == 2
