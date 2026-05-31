@@ -21,6 +21,30 @@ class LLMRequest:
     schema_name: str = "response"
 
 
+def _parse_json_content(content: str) -> dict[str, Any]:
+    """Parse the first JSON object out of an LLM response.
+
+    Even with strict structured outputs, models occasionally wrap the JSON in a
+    markdown code fence or append trailing content on a second line, which bare
+    ``json.loads`` rejects ("Extra data"). Strip a fence if present and decode
+    only the first JSON value, ignoring (but logging) any trailing data."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = text[3:]
+        if text[:4].lower() == "json":
+            text = text[4:]
+        text = text.strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+    obj, end = json.JSONDecoder().raw_decode(text)
+    if end < len(text.rstrip()):
+        log.warning(
+            "LLM returned %d extra char(s) after the JSON value; ignoring them.",
+            len(text.rstrip()) - end,
+        )
+    return obj
+
+
 class LLMClient(Protocol):
     def complete_json(self, request: LLMRequest) -> dict[str, Any]: ...
     def embed(self, texts: list[str], model: str) -> list[list[float]]: ...
@@ -105,7 +129,7 @@ class OpenAIClient:
                     ],
                 )
                 content = resp.choices[0].message.content or "{}"
-                return json.loads(content)
+                return _parse_json_content(content)
             except Exception as e:
                 last_exc = e
                 wait = min(2 ** attempt, 30)
