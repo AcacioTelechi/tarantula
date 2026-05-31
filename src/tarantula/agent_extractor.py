@@ -62,8 +62,9 @@ def _system_prompt(v: VariableSpec) -> str:
             "government/agency bodies that are not the subject, and generic "
             "platform or policy URLs (e.g. a social network's own privacy "
             "page). Never invent placeholder items. Prefer fewer well-grounded "
-            "items over a long noisy list. Search several relevant pages before "
-            "answering so the list is reasonably complete."
+            "items over a long noisy list. Once you have grounded the items you "
+            "can find on a relevant page, answer — do not keep searching "
+            "indefinitely."
         )
     return "\n".join(lines)
 
@@ -190,7 +191,17 @@ def extract_variable_agent(
         "Begin. Use the tools to locate the value, then answer."
     ]
 
-    for _step in range(max_steps):
+    for step in range(max_steps):
+        if step == max_steps - 1:
+            # Last step: force the agent to commit. Without this, an agent that
+            # keeps searching until the budget runs out yields null and throws
+            # away everything it found — the main cause of run-to-run flakiness.
+            transcript.append(
+                "FINAL STEP: no searches remain. Use the 'answer' action now "
+                "with the best grounded value you have found (include a verbatim "
+                "quote and its source_url). Answer value null only if you truly "
+                "found nothing supportable."
+            )
         req = LLMRequest(
             system=system,
             user=_assemble_user(transcript),

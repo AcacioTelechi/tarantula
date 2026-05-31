@@ -254,3 +254,17 @@ def test_system_prompt_adds_array_precision_only_for_arrays():
                           extraction_type="agent")
     assert "Array precision" in _system_prompt(arr)
     assert "Array precision" not in _system_prompt(scalar)
+
+
+def test_agent_forces_answer_on_final_step():
+    # An agent that only ever greps: the last request must instruct it to
+    # commit an answer now, so exhaustion becomes a best-effort answer instead
+    # of silently discarding all the search work.
+    grep_action = {"thought": "s", "action": "grep", "pattern": "x",
+                   "ignore_case": True, "url": None, "answer": None}
+    fake = FakeLLMClient(responses=[dict(grep_action) for _ in range(3)])
+    out = extract_variable_agent(
+        client=fake, variable=_var(), corpus=_corpus(), model="fake", max_steps=3)
+    assert out["value"] is None
+    assert "FINAL STEP" in fake.calls[-1].user
+    assert "FINAL STEP" not in fake.calls[0].user
