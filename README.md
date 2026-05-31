@@ -125,6 +125,39 @@ Tips for good extraction:
 - Prefer `array` over comma-joined strings so downstream code doesn't re-parse.
 - Use `required: true` sparingly — it only affects the exit code, not the JSON.
 
+#### Extraction strategies (`extraction_type`)
+
+Each variable can declare an `extraction_type` that controls how Tarantula
+finds its value:
+
+| `extraction_type` | Behaviour |
+|---|---|
+| `retrieval` *(default)* | Top-k chunk retrieval (BM25 + embeddings) followed by a single LLM extraction call — the standard pipeline. |
+| `agent` | An LLM agent iteratively searches the crawled pages' cleaned text with read-only tools (regex search + page read) and returns the same quote-grounded value. Best for pattern-shaped data (CNPJ, e-mails, founding years). |
+
+Two additional fields are valid **only** when `extraction_type: agent`:
+
+| Field | Type | Default | Range | Meaning |
+|---|---|---|---|---|
+| `hint` | string | — | — | Free-text guidance given to the agent (e.g. expected format, nearby keywords). |
+| `max_steps` | int | `8` | `1..50` | Tool-call budget per variable. Raise it for hard-to-find data; lower it to save tokens. |
+
+```yaml
+variables:
+  # Default strategy: retrieval (top-k chunks + one LLM call).
+  - name: missao
+    type: string
+    description: Mission statement.
+
+  # Agent strategy: an LLM agent searches crawled pages with regex/read tools.
+  - name: cnpj
+    type: string
+    description: Brazilian company tax id (CNPJ).
+    extraction_type: agent          # retrieval (default) | agent
+    hint: "14 digits formatted XX.XXX.XXX/XXXX-XX, often near the word 'CNPJ'"
+    max_steps: 6                     # optional tool-call budget (default 8)
+```
+
 ## Output
 
 Results are written to `--output` (or stdout if omitted) as a single JSON
