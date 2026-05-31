@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from pydantic import BaseModel
+
 log = logging.getLogger(__name__)
 
 
@@ -14,11 +16,20 @@ log = logging.getLogger(__name__)
 class LLMRequest:
     system: str
     user: str
-    json_schema: dict[str, Any]
+    response_model: type[BaseModel]
     model: str
     temperature: float = 0.0
     seed: int | None = 42
     schema_name: str = "response"
+
+
+def _response_format(model: type[BaseModel]) -> dict[str, Any]:
+    """Build an OpenAI strict structured-output ``response_format`` from a
+    Pydantic model. Using the SDK's own converter guarantees the schema is
+    strict-valid (all-required, additionalProperties:false), which keeps the
+    model fully constrained — the usual cause of stray text after the JSON."""
+    from openai.lib._parsing._completions import type_to_response_format_param
+    return dict(type_to_response_format_param(model))
 
 
 def _parse_json_content(content: str) -> dict[str, Any]:
@@ -108,6 +119,7 @@ class OpenAIClient:
         self._max_retries = max_retries
 
     def complete_json(self, request: LLMRequest) -> dict[str, Any]:
+        response_format = _response_format(request.response_model)
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
@@ -115,21 +127,17 @@ class OpenAIClient:
                     model=request.model,
                     temperature=request.temperature,
                     seed=request.seed,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": request.schema_name,
-                            "schema": request.json_schema,
-                            "strict": True,
-                        },
-                    },
+                    response_format=response_format,
                     messages=[
                         {"role": "system", "content": request.system},
                         {"role": "user", "content": request.user},
                     ],
                 )
                 content = resp.choices[0].message.content or "{}"
-                return _parse_json_content(content)
+                data = _parse_json_content(content)
+                # Validate against the Pydantic model; coerces types and rejects
+                # malformed output so a bad reply retries instead of propagating.
+                return request.response_model.model_validate(data).model_dump()
             except Exception as e:
                 last_exc = e
                 wait = min(2 ** attempt, 30)

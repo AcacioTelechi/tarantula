@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-from typing import Any
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, create_model
 
 from .agent_tools import Corpus, grep, list_pages, read_page
 from .config import VariableSpec
-from .contextual_extractor import _quote_in_any, build_extract_schema
+from .contextual_extractor import _quote_in_any, build_extract_model
 from .llm import LLMClient, LLMRequest
 
 DEFAULT_MAX_STEPS = 8
@@ -54,23 +56,19 @@ def _system_prompt(v: VariableSpec) -> str:
     return "\n".join(lines)
 
 
-def _action_schema(v: VariableSpec) -> dict[str, Any]:
-    answer_schema = dict(build_extract_schema(v))
-    answer_schema["type"] = ["object", "null"]
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["thought", "action", "pattern", "ignore_case", "url", "answer"],
-        "properties": {
-            "thought": {"type": "string"},
-            "action": {"type": "string",
-                       "enum": ["grep", "read_page", "list_pages", "answer"]},
-            "pattern": {"type": ["string", "null"]},
-            "ignore_case": {"type": ["boolean", "null"]},
-            "url": {"type": ["string", "null"]},
-            "answer": answer_schema,
-        },
-    }
+def _action_model(v: VariableSpec) -> type[BaseModel]:
+    """Pydantic model for one agent turn: a tool action with its parameters,
+    plus an optional ``answer`` (the same extraction model as retrieval)."""
+    answer_model = build_extract_model(v)
+    return create_model(
+        f"agent_{v.name}",
+        thought=(str, ...),
+        action=(Literal["grep", "read_page", "list_pages", "answer"], ...),
+        pattern=(Optional[str], ...),
+        ignore_case=(Optional[bool], ...),
+        url=(Optional[str], ...),
+        answer=(Optional[answer_model], ...),
+    )
 
 
 def _grounding_map(corpus: Corpus) -> dict[str, list[str]]:
@@ -174,7 +172,7 @@ def extract_variable_agent(
         return _null_payload(variable, "no pages crawled")
 
     system = _system_prompt(variable)
-    schema = _action_schema(variable)
+    response_model = _action_model(variable)
     grounding = _grounding_map(corpus)
     transcript: list[str] = [
         "Begin. Use the tools to locate the value, then answer."
@@ -184,7 +182,7 @@ def extract_variable_agent(
         req = LLMRequest(
             system=system,
             user=_assemble_user(transcript),
-            json_schema=schema,
+            response_model=response_model,
             model=model,
             temperature=0.0,
             schema_name=f"agent_{variable.name}",

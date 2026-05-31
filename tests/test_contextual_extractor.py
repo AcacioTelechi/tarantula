@@ -1,8 +1,8 @@
 from tarantula.config import VariableSpec
 from tarantula.contextual_extractor import (
-    extract_variable, extract_all, build_extract_schema,
+    extract_variable, extract_all, build_extract_model,
 )
-from tarantula.llm import FakeLLMClient
+from tarantula.llm import FakeLLMClient, _response_format
 from tarantula.retriever import Hit
 
 
@@ -27,19 +27,42 @@ def _hit(chunk_id: int, url: str, text: str, title: str | None = None) -> Hit:
     )
 
 
-def test_scalar_schema_shape():
-    schema = build_extract_schema(_scalar_spec())
-    assert set(schema["required"]) == {"value", "source_url", "quote", "reasoning"}
+def test_scalar_model_shape_and_validation():
+    Model = build_extract_model(_scalar_spec())
+    assert set(Model.model_fields) == {"value", "source_url", "quote", "reasoning"}
+    inst = Model.model_validate(
+        {"value": "ACME", "source_url": "u", "quote": "q", "reasoning": "r"})
+    assert inst.value == "ACME"
+    # value is nullable (variable not found).
+    null = Model.model_validate(
+        {"value": None, "source_url": None, "quote": None, "reasoning": "r"})
+    assert null.value is None
+
+
+def test_array_model_shape_and_validation():
+    Model = build_extract_model(_array_spec())
+    assert set(Model.model_fields) == {"value", "sources", "reasoning"}
+    inst = Model.model_validate({
+        "value": ["a", "b"],
+        "sources": [{"value_item": "a", "source_url": "u", "quote": "q"}],
+        "reasoning": "r",
+    })
+    assert inst.value == ["a", "b"]
+    assert inst.sources[0].value_item == "a"
+
+
+def test_scalar_model_builds_strict_response_format():
+    rf = _response_format(build_extract_model(_scalar_spec()))
+    assert rf["json_schema"]["strict"] is True
+    schema = rf["json_schema"]["schema"]
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["value"]["type"] == ["string", "null"]
+    assert set(schema["required"]) == {"value", "source_url", "quote", "reasoning"}
 
 
-def test_array_schema_shape():
-    schema = build_extract_schema(_array_spec())
-    assert "sources" in schema["required"]
-    src_item = schema["properties"]["sources"]["items"]
-    assert src_item["required"] == ["value_item", "source_url", "quote"]
-    assert src_item["properties"]["value_item"]["type"] == "string"
+def test_array_model_builds_strict_response_format():
+    # Guards the SDK converter against a nested list[submodel] (array variables).
+    rf = _response_format(build_extract_model(_array_spec()))
+    assert rf["json_schema"]["strict"] is True
 
 
 def test_extract_scalar_returns_value_when_quote_valid():

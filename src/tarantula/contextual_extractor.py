@@ -2,60 +2,46 @@ from __future__ import annotations
 
 import concurrent.futures
 import re
-from typing import Any
+from typing import Any, Optional
+
+from pydantic import BaseModel, create_model
 
 from .config import VariableSpec
 from .llm import LLMClient, LLMRequest
 from .retriever import Hit
 
-_JSON_TYPE = {"string": "string", "integer": "integer",
-              "number": "number", "boolean": "boolean"}
+_PY_TYPE: dict[str, type] = {
+    "string": str, "integer": int, "number": float, "boolean": bool,
+}
 
 
-def _value_schema(spec: VariableSpec) -> dict[str, Any]:
-    if spec.type == "array":
-        return {
-            "type": ["array", "null"],
-            "items": {"type": _JSON_TYPE[spec.items]},  # type: ignore[index]
-        }
-    return {"type": [_JSON_TYPE[spec.type], "null"]}
-
-
-def build_extract_schema(v: VariableSpec) -> dict[str, Any]:
+def build_extract_model(v: VariableSpec) -> type[BaseModel]:
+    """Pydantic model describing one variable's extraction output. The OpenAI
+    client turns this into a strict structured-output schema and validates the
+    reply through it. Scalars expose value/source_url/quote/reasoning; arrays
+    expose value/sources/reasoning with one cited source per item."""
     if v.type == "array":
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["value", "sources", "reasoning"],
-            "properties": {
-                "value": _value_schema(v),
-                "sources": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["value_item", "source_url", "quote"],
-                        "properties": {
-                            "value_item": {"type": _JSON_TYPE[v.items]},  # type: ignore[index]
-                            "source_url": {"type": "string"},
-                            "quote": {"type": "string"},
-                        },
-                    },
-                },
-                "reasoning": {"type": "string"},
-            },
-        }
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["value", "source_url", "quote", "reasoning"],
-        "properties": {
-            "value": _value_schema(v),
-            "source_url": {"type": ["string", "null"]},
-            "quote": {"type": ["string", "null"]},
-            "reasoning": {"type": "string"},
-        },
-    }
+        item_t = _PY_TYPE[v.items]  # type: ignore[index]
+        source = create_model(
+            f"extract_{v.name}_source",
+            value_item=(item_t, ...),
+            source_url=(str, ...),
+            quote=(str, ...),
+        )
+        return create_model(
+            f"extract_{v.name}",
+            value=(Optional[list[item_t]], ...),
+            sources=(list[source], ...),
+            reasoning=(str, ...),
+        )
+    value_t = _PY_TYPE[v.type]
+    return create_model(
+        f"extract_{v.name}",
+        value=(Optional[value_t], ...),
+        source_url=(Optional[str], ...),
+        quote=(Optional[str], ...),
+        reasoning=(str, ...),
+    )
 
 
 SYSTEM = (
@@ -180,7 +166,7 @@ def extract_variable(
     req = LLMRequest(
         system=SYSTEM,
         user=_render_user_prompt(variable, hits),
-        json_schema=build_extract_schema(variable),
+        response_model=build_extract_model(variable),
         model=model,
         temperature=0.0,
         schema_name=f"extract_{variable.name}",
