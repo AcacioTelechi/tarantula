@@ -13,6 +13,7 @@ from pydantic import (
 
 ScalarType = Literal["string", "integer", "number", "boolean"]
 VarType = Literal["string", "integer", "number", "boolean", "array"]
+ExtractionType = Literal["retrieval", "agent"]
 
 
 class SiteDefaults(BaseModel):
@@ -63,6 +64,9 @@ class VariableSpec(BaseModel):
     required: bool = False
     items: ScalarType | None = None
     examples: list[VariableExample] = Field(default_factory=list)
+    extraction_type: ExtractionType = "retrieval"
+    hint: str | None = None
+    max_steps: int | None = Field(default=None, ge=1, le=50)
 
     @model_validator(mode="after")
     def _check_items(self) -> "VariableSpec":
@@ -70,6 +74,21 @@ class VariableSpec(BaseModel):
             raise ValueError(f"variable {self.name!r}: array type requires 'items'")
         if self.type != "array" and self.items is not None:
             raise ValueError(f"variable {self.name!r}: 'items' only valid for array type")
+        return self
+
+    @model_validator(mode="after")
+    def _check_agent_fields(self) -> "VariableSpec":
+        if self.extraction_type != "agent":
+            if self.hint is not None:
+                raise ValueError(
+                    f"variable {self.name!r}: 'hint' only valid when "
+                    "extraction_type is 'agent'"
+                )
+            if self.max_steps is not None:
+                raise ValueError(
+                    f"variable {self.name!r}: 'max_steps' only valid when "
+                    "extraction_type is 'agent'"
+                )
         return self
 
 

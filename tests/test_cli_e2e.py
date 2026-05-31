@@ -176,3 +176,73 @@ async def test_retrieval_bm25_does_not_embed(httpserver, tmp_path, fixtures_dir)
 
     # bm25 mode must not hit the embedding API at all.
     assert fake.embed_calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_mixes_retrieval_and_agent_strategies(
+    httpserver, tmp_path, fixtures_dir
+):
+    _serve_fixture(httpserver, fixtures_dir)
+
+    urls_yaml = tmp_path / "urls.yaml"
+    urls_yaml.write_text(
+        "defaults:\n  max_depth: 2\n  rate_limit_rps: 50\n"
+        "sites:\n"
+        f"  - url: {httpserver.url_for('/')}\n"
+    )
+    vars_yaml = tmp_path / "vars.yaml"
+    vars_yaml.write_text(
+        "variables:\n"
+        "  - {name: company_name, type: string, description: Company name.}\n"
+        "  - {name: founded_year, type: integer, description: Founded year., "
+        "extraction_type: agent, hint: 'a four digit year'}\n"
+    )
+
+    about_url = httpserver.url_for("/about")
+    index_url = httpserver.url_for("/")
+    fake = FakeLLMClient(responses_by_schema={
+        # retrieval strategy for company_name. The quote MUST be a verbatim
+        # substring of a chunk that bm25 retrieves for this variable — that is
+        # the index page ("ACME Inc. is a privately held company."), not /about.
+        "extract_company_name": {
+            "value": "ACME Inc.", "source_url": index_url,
+            "quote": "ACME Inc.", "reasoning": "from home page",
+        },
+        # agent strategy for founded_year — single-step answer (same response
+        # is returned for every step under this schema key).
+        "agent_founded_year": {
+            "thought": "found it", "action": "answer",
+            "pattern": None, "ignore_case": None, "url": None,
+            "answer": {"value": 1998, "source_url": about_url,
+                       "quote": "founded in 1998", "reasoning": "on /about"},
+        },
+    })
+
+    opts = PipelineOptions(
+        urls_path=urls_yaml,
+        variables_path=vars_yaml,
+        output_path=tmp_path / "out.json",
+        db_path=tmp_path / "t.db",
+        data_dir=tmp_path / "data",
+        extract_model="fake",
+        cache_ttl_seconds=3600,
+        max_tokens=10_000_000,
+        no_cache=False,
+        llm_client=fake,
+        quiet=True,
+        retrieval="bm25",
+    )
+    exit_code = await run_pipeline(opts)
+
+    out = json.loads((tmp_path / "out.json").read_text())
+    by_var = out["sites"][0]["variables"]
+    # Order preserved: company_name first, founded_year second.
+    assert list(by_var.keys()) == ["company_name", "founded_year"]
+    assert by_var["company_name"]["value"] == "ACME Inc."
+    assert by_var["founded_year"]["value"] == 1998
+    assert exit_code == 0
+
+    # The agent variable used the agent schema, not the retrieval schema.
+    schema_names = {c.schema_name for c in fake.calls}
+    assert "agent_founded_year" in schema_names
+    assert "extract_founded_year" not in schema_names

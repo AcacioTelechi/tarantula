@@ -1,7 +1,8 @@
 import pytest
+from pydantic import ValidationError
 from tarantula.config import (
     load_urls_config, load_variables_config,
-    URLsConfig, VariablesConfig, SiteConfig, VariableSpec,
+    URLsConfig, VariablesConfig, VariableSpec,
 )
 
 
@@ -76,3 +77,39 @@ def test_variable_type_rejects_unsupported(tmp_path):
     )
     with pytest.raises(ValueError):
         load_variables_config(p)
+
+
+def test_variable_defaults_to_retrieval_strategy():
+    v = VariableSpec(name="nome", type="string", description="x")
+    assert v.extraction_type == "retrieval"
+    assert v.hint is None
+    assert v.max_steps is None
+
+
+def test_agent_variable_accepts_hint_and_max_steps():
+    v = VariableSpec(
+        name="cnpj", type="string", description="tax id",
+        extraction_type="agent", hint="14 digits", max_steps=6,
+    )
+    assert v.extraction_type == "agent"
+    assert v.hint == "14 digits"
+    assert v.max_steps == 6
+
+
+def test_hint_rejected_for_retrieval_variable():
+    with pytest.raises(ValidationError):
+        VariableSpec(name="nome", type="string", description="x", hint="nope")
+
+
+def test_max_steps_rejected_for_retrieval_variable():
+    with pytest.raises(ValidationError):
+        VariableSpec(name="nome", type="string", description="x", max_steps=5)
+
+
+def test_max_steps_bounds_enforced():
+    with pytest.raises(ValidationError):
+        VariableSpec(name="cnpj", type="string", description="x",
+                     extraction_type="agent", max_steps=0)
+    with pytest.raises(ValidationError):
+        VariableSpec(name="cnpj", type="string", description="x",
+                     extraction_type="agent", max_steps=51)
