@@ -1,5 +1,5 @@
 from tarantula.agent_tools import Corpus
-from tarantula.agent_extractor import extract_variable_agent
+from tarantula.agent_extractor import extract_variable_agent, extract_all_agent
 from tarantula.config import VariableSpec
 from tarantula.llm import FakeLLMClient
 
@@ -112,3 +112,97 @@ def test_agent_unknown_url_observation_does_not_crash():
         client=fake, variable=_var(), corpus=_corpus(), model="fake", max_steps=5)
     assert out["value"] is None
     assert len(fake.calls) == 2
+
+
+def _array_corpus():
+    return Corpus.from_pages([
+        ("https://a.example/products", "Products",
+         "We sell Widget Pro and Widget Lite to everyone."),
+    ])
+
+
+def test_agent_array_collects_grounded_sources():
+    fake = FakeLLMClient(responses=[
+        {"thought": "answer", "action": "answer", "pattern": None,
+         "ignore_case": None, "url": None,
+         "answer": {
+             "value": ["Widget Pro", "Widget Lite"],
+             "sources": [
+                 {"value_item": "Widget Pro",
+                  "source_url": "https://a.example/products",
+                  "quote": "Widget Pro"},
+                 {"value_item": "Widget Lite",
+                  "source_url": "https://a.example/products",
+                  "quote": "Widget Lite"},
+             ],
+             "reasoning": "listed",
+         }},
+    ])
+    v = VariableSpec(name="products", type="array", items="string",
+                     description="products", extraction_type="agent")
+    out = extract_variable_agent(
+        client=fake, variable=v, corpus=_array_corpus(), model="fake", max_steps=5)
+    assert out["value"] == ["Widget Pro", "Widget Lite"]
+    assert len(out["sources"]) == 2
+
+
+def test_agent_array_drops_ungrounded_items_and_retries():
+    bad = {"thought": "guess", "action": "answer", "pattern": None,
+           "ignore_case": None, "url": None,
+           "answer": {"value": ["Phantom"],
+                      "sources": [{"value_item": "Phantom",
+                                   "source_url": "https://a.example/products",
+                                   "quote": "Phantom Device"}],
+                      "reasoning": "hallucinated"}}
+    good = {"thought": "fix", "action": "answer", "pattern": None,
+            "ignore_case": None, "url": None,
+            "answer": {"value": ["Widget Pro"],
+                       "sources": [{"value_item": "Widget Pro",
+                                    "source_url": "https://a.example/products",
+                                    "quote": "Widget Pro"}],
+                       "reasoning": "real"}}
+    fake = FakeLLMClient(responses=[bad, good])
+    v = VariableSpec(name="products", type="array", items="string",
+                     description="products", extraction_type="agent")
+    out = extract_variable_agent(
+        client=fake, variable=v, corpus=_array_corpus(), model="fake", max_steps=5)
+    assert out["value"] == ["Widget Pro"]
+    assert len(fake.calls) == 2
+
+
+def test_extract_all_agent_preserves_order_and_resolves_max_steps():
+    # Two agent variables, each answered in a single step. Using
+    # responses_by_schema keyed by schema_name makes responses addressable
+    # per-variable, which is concurrency-safe across the thread pool.
+    fake = FakeLLMClient(responses_by_schema={
+        "agent_nome": {
+            "thought": "x", "action": "answer", "pattern": None,
+            "ignore_case": None, "url": None,
+            "answer": {"value": "ACME", "source_url": "https://a.example/",
+                       "quote": "Welcome.", "reasoning": "home"}},
+        "agent_cnpj": {
+            "thought": "x", "action": "answer", "pattern": None,
+            "ignore_case": None, "url": None,
+            "answer": {"value": "12.345.678/0001-90",
+                       "source_url": "https://a.example/",
+                       "quote": "CNPJ: 12.345.678/0001-90", "reasoning": "home"}},
+    })
+    variables = [
+        VariableSpec(name="nome", type="string", description="name",
+                     extraction_type="agent"),
+        VariableSpec(name="cnpj", type="string", description="id",
+                     extraction_type="agent", max_steps=3),
+    ]
+    out = extract_all_agent(
+        client=fake, variables=variables, corpus=_corpus(), model="fake")
+    # Order matches input variable order.
+    assert list(out.keys()) == ["nome", "cnpj"]
+    assert out["nome"]["value"] == "ACME"
+    assert out["cnpj"]["value"] == "12.345.678/0001-90"
+
+
+def test_extract_all_agent_empty_returns_empty():
+    fake = FakeLLMClient(responses=[])
+    out = extract_all_agent(client=fake, variables=[], corpus=_corpus(),
+                            model="fake")
+    assert out == {}
