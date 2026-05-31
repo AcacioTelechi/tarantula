@@ -174,7 +174,7 @@ from variable name to `{value, source_url, quote, reasoning, required_missing}`.
 | `--output` | stdout | Write results JSON to this path. |
 | `--db` | `tarantula.db` | SQLite cache + audit store. |
 | `--data-dir` | `./data` | Raw HTML and run logs live here. |
-| `--extract-model` | `gpt-4o-mini` | Model for the per-variable extraction call. |
+| `--extract-model` | `gpt-5.4-nano` | Model for the per-variable extraction call. |
 | `--cache-ttl` | `24h` | Cache TTL (`30s`, `10m`, `24h`, `7d`, or seconds). |
 | `--no-cache` | off | Ignore the cache; re-fetch and re-extract. |
 | `--workers` | `8` | Concurrent per-variable LLM calls. |
