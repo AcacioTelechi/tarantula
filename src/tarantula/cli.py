@@ -13,6 +13,8 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 
+from .agent_extractor import extract_all_agent
+from .agent_tools import Corpus
 from .chunker import chunk_text
 from .config import load_urls_config, load_variables_config
 from .contextual_extractor import extract_all
@@ -70,8 +72,11 @@ class Reporter:
         color = {"ok": "green", "partial": "yellow", "failed": "red"}.get(status, "white")
         self._emit(f"  [dim]crawl[/] [{color}]{status}[/]: {pages} page(s)")
 
-    def extract_start(self, n_vars: int) -> None:
-        self._emit(f"  [dim]extracting {n_vars} variable(s) from retrieved context...[/]")
+    def extract_start(self, n_retrieval: int, n_agent: int) -> None:
+        self._emit(
+            f"  [dim]extracting {n_retrieval} retrieval + {n_agent} agent "
+            f"variable(s)...[/]"
+        )
 
     def extract_done(self, n_vars: int) -> None:
         self._emit(f"  [dim]extract done: {n_vars} variable(s) processed[/]")
@@ -185,8 +190,15 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                     text=chunk.text, token_count=chunk.token_count,
                 )
 
+        # Split variables by extraction strategy. Agent variables never touch
+        # retrieval or embeddings.
+        retrieval_vars = [v for v in vars_cfg.variables
+                          if v.extraction_type == "retrieval"]
+        agent_vars = [v for v in vars_cfg.variables
+                      if v.extraction_type == "agent"]
+
         # --- Embed any chunks that don't yet have a vector (hybrid/vec only). ---
-        if opts.retrieval in ("hybrid", "vec"):
+        if retrieval_vars and opts.retrieval in ("hybrid", "vec"):
             chunk_ids = [r[0] for r in store.conn.execute(
                 "SELECT c.id FROM chunks c "
                 "JOIN crawl_pages cp ON cp.page_id = c.page_id "
@@ -207,9 +219,9 @@ async def run_pipeline(opts: PipelineOptions) -> int:
                     for (cid, _text), vec in zip(batch, vecs):
                         store.save_chunk_embedding(cid, vec, model=opts.embed_model)
 
-        # --- Retrieve top-k per variable. ---
+        # --- Retrieve top-k per retrieval variable. ---
         hits_by_var: dict[str, list[Hit]] = {}
-        for v in vars_cfg.variables:
+        for v in retrieval_vars:
             hits = retrieve_for_variable(
                 store=store, crawl_id=result.crawl_id, variable=v,
                 embed_fn=lambda texts: client.embed(
@@ -221,15 +233,29 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             )
             hits_by_var[v.name] = hits
 
-        # --- One LLM call per variable, in parallel. ---
-        reporter.extract_start(n_vars=len(vars_cfg.variables))
-        reduced = extract_all(
+        # --- Extract: retrieval strategy + agent strategy. ---
+        reporter.extract_start(n_retrieval=len(retrieval_vars),
+                               n_agent=len(agent_vars))
+        reduced_retrieval = extract_all(
             client=client,
-            variables=vars_cfg.variables,
+            variables=retrieval_vars,
             hits_by_var=hits_by_var,
             model=opts.extract_model,
             max_workers=opts.workers,
         )
+        corpus = Corpus.from_pages([
+            (url, title, cleaned)
+            for _page_id, url, title, cleaned in pages_with_text
+        ])
+        reduced_agent = extract_all_agent(
+            client=client,
+            variables=agent_vars,
+            corpus=corpus,
+            model=opts.extract_model,
+            max_workers=opts.workers,
+        )
+        merged = {**reduced_retrieval, **reduced_agent}
+        reduced = {v.name: merged[v.name] for v in vars_cfg.variables}
         reporter.extract_done(n_vars=len(reduced))
 
         # Persist each final extraction.
@@ -446,6 +472,36 @@ def retrieve(
             console.print(f"      [dim]{preview}[/]")
             if show_text and len(h["text"]) > 160:
                 console.print(f"      [dim]{h['text'][160:]}[/]")
+
+
+@app.command()
+def flatten(
+    input: Path = typer.Argument(..., exists=True, readable=True,
+        help="Path to a run JSON file produced by `tarantula extract`."),
+    output: Optional[Path] = typer.Option(None, "--output", "-o",
+        help="Write CSV here. Default: print to stdout."),
+) -> None:
+    """Flatten a run JSON into a wide CSV: one row per site, each variable
+    expanded into <var>_value/_source_url/_quote/_reasoning/_required_missing."""
+    import csv
+    import io
+
+    from .flatten import flatten_run
+
+    payload = json.loads(input.read_text())
+    fields, rows = flatten_run(payload)
+
+    if output:
+        with output.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+    else:
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+        print(buf.getvalue(), end="")
 
 
 def _parse_duration(s: str) -> int:
