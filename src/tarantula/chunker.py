@@ -23,23 +23,85 @@ def _split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in text.split("\n\n") if p.strip()]
 
 
+def _hard_split_tokens(text: str, max_tokens: int) -> list[str]:
+    """Slice text into pieces of at most max_tokens by token boundary.
+
+    Last resort for content with no whitespace to break on (minified blobs).
+    """
+    tokens = _ENCODING.encode(text)
+    return [
+        _ENCODING.decode(tokens[i:i + max_tokens])
+        for i in range(0, len(tokens), max_tokens)
+    ]
+
+
+def _enforce_max(para: str, max_tokens: int) -> list[str]:
+    """Split a paragraph so every piece is at most max_tokens.
+
+    Prefer line boundaries; any single line still over the limit is hard
+    token-sliced. Paragraphs already within the limit pass through unchanged.
+    """
+    if count_tokens(para) <= max_tokens:
+        return [para]
+    raw: list[str] = []
+    buf: list[str] = []
+    buf_tokens = 0
+    for line in para.split("\n"):
+        lt = count_tokens(line)
+        if lt > max_tokens:
+            if buf:
+                raw.append("\n".join(buf))
+                buf, buf_tokens = [], 0
+            raw.extend(_hard_split_tokens(line, max_tokens))
+            continue
+        if buf and buf_tokens + lt > max_tokens:
+            raw.append("\n".join(buf))
+            buf, buf_tokens = [], 0
+        buf.append(line)
+        buf_tokens += lt
+    if buf:
+        raw.append("\n".join(buf))
+    # Per-line token counts underestimate the joined text (newline/merge
+    # tokens are not counted per line), so a piece's true count can still
+    # exceed the limit. Hard-split any piece that does — this guarantees
+    # every returned piece is within max_tokens.
+    pieces: list[str] = []
+    for p in raw:
+        if count_tokens(p) <= max_tokens:
+            pieces.append(p)
+        else:
+            pieces.extend(_hard_split_tokens(p, max_tokens))
+    return pieces
+
+
 def chunk_text(
     text: str,
     *,
     target_tokens: int = 2000,
     overlap_tokens: int = 200,
+    max_tokens: int = 8192,
 ) -> Iterator[Chunk]:
     """Split text into paragraph-boundary-aligned chunks with overlap.
 
     Greedy fill: accumulate paragraphs until adding the next would exceed
     target_tokens; then emit a chunk. Keep the trailing N tokens worth of
     paragraphs as overlap into the next chunk.
+
+    No emitted chunk exceeds max_tokens (the embedding model's input limit):
+    an oversized paragraph is split at line, then token, boundaries first.
     """
     paragraphs = _split_paragraphs(text)
     if not paragraphs:
         if text.strip():
-            yield Chunk(ordinal=0, text=text.strip(), token_count=count_tokens(text))
-        return
+            paragraphs = [text.strip()]
+        else:
+            return
+
+    # Guarantee no single paragraph exceeds max_tokens, so the force-add
+    # path below can never emit an over-limit chunk.
+    paragraphs = [
+        piece for p in paragraphs for piece in _enforce_max(p, max_tokens)
+    ]
 
     para_tokens = [count_tokens(p) for p in paragraphs]
 

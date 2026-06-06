@@ -182,13 +182,11 @@ async def run_pipeline(opts: PipelineOptions) -> int:
             for page_id, url, title, cleaned in pages_with_text
         ]
 
-        # Persist chunks serially (SQLite, single-threaded).
+        # Persist chunks serially (SQLite, single-threaded). sync_page_chunks
+        # replaces a page's chunks when they changed (e.g. the chunker's token
+        # limits changed) so stale, never-embeddable rows can't linger.
         for page_id, url, title, chunks in chunks_per_page:
-            for chunk in chunks:
-                store.save_chunk(
-                    page_id=page_id, ordinal=chunk.ordinal,
-                    text=chunk.text, token_count=chunk.token_count,
-                )
+            store.sync_page_chunks(page_id, chunks)
 
         # Split variables by extraction strategy. Agent variables never touch
         # retrieval or embeddings.

@@ -155,6 +155,12 @@ class OpenAIClient:
                 return [d.embedding for d in resp.data]
             except Exception as e:
                 last_exc = e
+                # Client errors (4xx other than 429 rate-limit) are deterministic
+                # — e.g. an input over the model's token limit. Retrying only
+                # wastes time and spams logs, so surface them immediately.
+                status = getattr(e, "status_code", None)
+                if isinstance(status, int) and 400 <= status < 500 and status != 429:
+                    raise RuntimeError(f"OpenAI embed request rejected: {e}") from e
                 wait = min(2 ** attempt, 30)
                 log.warning("OpenAI embed attempt %d failed: %s (retry in %ds)",
                             attempt + 1, e, wait)

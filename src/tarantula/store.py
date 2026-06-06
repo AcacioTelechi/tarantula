@@ -280,6 +280,31 @@ class Store:
         self.conn.commit()
         return cur.lastrowid
 
+    def sync_page_chunks(self, page_id: int, chunks: list) -> None:
+        """Make the stored chunks for a page match the given list exactly.
+
+        If the page's chunks are unchanged (same text per ordinal) this is a
+        no-op, preserving cached embeddings. Otherwise the page's chunks are
+        deleted and re-inserted so a changed chunker (e.g. new token limits)
+        fully replaces stale rows instead of leaving orphans. The FTS index
+        stays in sync via the chunks insert/delete triggers.
+        """
+        existing = self.conn.execute(
+            "SELECT ordinal, text FROM chunks WHERE page_id=? ORDER BY ordinal",
+            (page_id,),
+        ).fetchall()
+        new = [(c.ordinal, c.text) for c in chunks]
+        if [(o, t) for o, t in existing] == new:
+            return
+        self.conn.execute("DELETE FROM chunks WHERE page_id=?", (page_id,))
+        for c in chunks:
+            self.conn.execute(
+                "INSERT INTO chunks (page_id, ordinal, text, token_count) "
+                "VALUES (?, ?, ?, ?)",
+                (page_id, c.ordinal, c.text, c.token_count),
+            )
+        self.conn.commit()
+
     def save_extraction(
         self,
         run_id: int,

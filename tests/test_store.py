@@ -223,6 +223,50 @@ def _seed_two_chunks(tmp_path):
     return store, crawl_id, c1, c2
 
 
+def test_sync_page_chunks_replaces_changed_chunks(store):
+    from tarantula.chunker import Chunk
+    page_id = store.save_page(
+        url="https://example.com", raw_bytes=b"<a/>", http_status=200,
+        content_type="text/html", fetcher="http", title="ex",
+    )
+    # Old chunker left a single oversized chunk for this page.
+    store.save_chunk(page_id=page_id, ordinal=0, text="OLD oversized blob", token_count=9999)
+    # New chunker produces two bounded chunks for the same page.
+    new = [Chunk(ordinal=0, text="bounded part one", token_count=3),
+           Chunk(ordinal=1, text="bounded part two", token_count=3)]
+    store.sync_page_chunks(page_id, new)
+    rows = store.conn.execute(
+        "SELECT ordinal, text, token_count FROM chunks WHERE page_id=? ORDER BY ordinal",
+        (page_id,),
+    ).fetchall()
+    assert rows == [(0, "bounded part one", 3), (1, "bounded part two", 3)]
+    # FTS index reflects the replacement (old text gone, new text present).
+    assert store.conn.execute(
+        "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'oversized'"
+    ).fetchone()[0] == 0
+    assert store.conn.execute(
+        "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'bounded'"
+    ).fetchone()[0] == 2
+
+
+def test_sync_page_chunks_preserves_embeddings_when_unchanged(store):
+    from tarantula.chunker import Chunk
+    page_id = store.save_page(
+        url="https://example.com", raw_bytes=b"<a/>", http_status=200,
+        content_type="text/html", fetcher="http", title="ex",
+    )
+    cid = store.save_chunk(page_id=page_id, ordinal=0, text="stable text", token_count=2)
+    store.save_chunk_embedding(cid, [0.1, 0.2, 0.3], model="stub")
+    # Re-syncing identical chunks must NOT delete/re-create rows (id stable,
+    # embedding preserved) so cached embeddings are not needlessly recomputed.
+    store.sync_page_chunks(page_id, [Chunk(ordinal=0, text="stable text", token_count=2)])
+    row = store.conn.execute(
+        "SELECT id, embedding IS NOT NULL FROM chunks WHERE page_id=?", (page_id,)
+    ).fetchone()
+    assert row[0] == cid
+    assert row[1] == 1
+
+
 def test_save_chunk_embedding_and_read_back(tmp_path):
     from tarantula.embeddings import unpack
     store, _crawl_id, c1, _c2 = _seed_two_chunks(tmp_path)
